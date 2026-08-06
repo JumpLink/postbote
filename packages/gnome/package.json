@@ -1,0 +1,29 @@
+{
+  "name": "@postbote/gnome",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GNOME Online Accounts (GOA) + Evolution Data Server binding: accounts, contacts, calendar, and the IMAP credentials the mail layer connects with. The real implementation is GJS-only (native gi:// typelibs); the Node entry is an unavailable stub. Requires the system GOA/EDS typelibs at runtime — nothing is bundled or published.",
+  "exports": {
+    ".": {
+      "browser": "./src/index.gjs.ts",
+      "node": "./src/index.node.ts",
+      "default": "./src/index.node.ts"
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@girs/ebook-1.2": "^4.1.0",
+    "@girs/ebookcontacts-1.2": "^4.1.0",
+    "@girs/ecal-2.0": "^4.1.0",
+    "@girs/edataserver-1.2": "^4.1.0",
+    "@girs/goa-1.0": "^4.1.0",
+    "@girs/icalglib-3.0": "^4.1.0",
+    "@postbote/protocol": "*"
+  }
+}

@@ -11,7 +11,15 @@
     "@types/yargs@^17.0.35",
     "oxfmt@^0.56.0",
     "oxlint@^1.71.0",
-    "typescript@^6.0.3"
+    "typescript@^6.0.3",
+    "@girs/ebook-1.2@^4.1.0",
+    "@girs/ebookcontacts-1.2@^4.1.0",
+    "@girs/ecal-2.0@^4.1.0",
+    "@girs/edataserver-1.2@^4.1.0",
+    "@girs/goa-1.0@^4.1.0",
+    "@girs/icalglib-3.0@^4.1.0",
+    "@girs/gio-2.0@^4.1.0",
+    "@girs/glib-2.0@^4.1.0"
   ],
   "packages": {
     "node_modules/@babel/code-frame": {
@@ -61,6 +69,88 @@
         "@girs/gjs": "^4.1.0",
         "@girs/gobject-2.0": "^4.1.0",
         "@girs/glib-2.0": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/camel-1.2": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/camel-1.2/-/camel-1.2-4.1.0.tgz",
+      "integrity": "sha512-Z24cN5zXmkCCYNKhEcDHSIlWUMocMpyEG4hEFaBdamcVDpn419uIUSSsQPj+FAUJ7sfriXrTKBV+THu0+Gg3CQ==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/libxml2-2.0": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/ebook-1.2": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/ebook-1.2/-/ebook-1.2-4.1.0.tgz",
+      "integrity": "sha512-YKbmZtGR1/R15nqgjZNAYEkfMzKPhOoGyXbx59AhyevIh5TLk5MCciUZX6x3TMq/W9vzOTfy9EkD27O+HnzlHQ==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/libxml2-2.0": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0",
+        "@girs/edataserver-1.2": "^4.1.0",
+        "@girs/soup-3.0": "^4.1.0",
+        "@girs/json-1.0": "^4.1.0",
+        "@girs/camel-1.2": "^4.1.0",
+        "@girs/ebookcontacts-1.2": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/ebookcontacts-1.2": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/ebookcontacts-1.2/-/ebookcontacts-1.2-4.1.0.tgz",
+      "integrity": "sha512-o5ANmv24PW85n1oxFoIFHP8fpUSbX/NXoN0S7IvU0BJ6JudwwO2F+7o0U3lunG8hHeuMFeHNIrXmPKYQWqneAg==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0",
+        "@girs/edataserver-1.2": "^4.1.0",
+        "@girs/libxml2-2.0": "^4.1.0",
+        "@girs/soup-3.0": "^4.1.0",
+        "@girs/json-1.0": "^4.1.0",
+        "@girs/camel-1.2": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/ecal-2.0": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/ecal-2.0/-/ecal-2.0-4.1.0.tgz",
+      "integrity": "sha512-elOEfEztK5oWRlaW6B01fpuYz6Qjc60zm6OWa4VlKhFA8GJEVHU8u65kXq2nGl6VhoN0U+11odZmj0bWgeDQTw==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/icalglib-3.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0",
+        "@girs/edataserver-1.2": "^4.1.0",
+        "@girs/libxml2-2.0": "^4.1.0",
+        "@girs/soup-3.0": "^4.1.0",
+        "@girs/json-1.0": "^4.1.0",
+        "@girs/camel-1.2": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/edataserver-1.2": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/edataserver-1.2/-/edataserver-1.2-4.1.0.tgz",
+      "integrity": "sha512-efvOKdu0TOgk7EjcV/nWJUCt2zaKXrb0AErFlGBadBwDqQZFB89Ck/mTlVHaw1hWdu7ntGPRHRXc5ppmb7vNiw==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/libxml2-2.0": "^4.1.0",
+        "@girs/soup-3.0": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0",
+        "@girs/json-1.0": "^4.1.0",
+        "@girs/camel-1.2": "^4.1.0"
       }
     },
     "node_modules/@girs/freetype2-2.0": {
@@ -168,6 +258,18 @@
         "@girs/gobject-2.0": "^4.1.0"
       }
     },
+    "node_modules/@girs/goa-1.0": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/goa-1.0/-/goa-1.0-4.1.0.tgz",
+      "integrity": "sha512-tftt7iykiAktSd3SqOB236v2hy7dQfpzi4pBbGsE0p+X6ygSvGDSgBoH9jVUPO6JjdeBqQCIVetqypwEKbJmrQ==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0"
+      }
+    },
     "node_modules/@girs/gobject-2.0": {
       "version": "4.1.0",
       "resolved": "https://registry.npmjs.org/@girs/gobject-2.0/-/gobject-2.0-4.1.0.tgz",
@@ -186,6 +288,28 @@
         "@girs/freetype2-2.0": "^4.1.0",
         "@girs/gobject-2.0": "^4.1.0",
         "@girs/glib-2.0": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/icalglib-3.0": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/icalglib-3.0/-/icalglib-3.0-4.1.0.tgz",
+      "integrity": "sha512-8Bgk1U8CmP+4c33F++jIqGnQZ/co0vl4VrcazU+oaPRTJbOVuzpJYIWqK5kBRq1Uec1/lSvNl9vvdtC5ZDpjIA==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0"
+      }
+    },
+    "node_modules/@girs/json-1.0": {
+      "version": "4.1.0",
+      "resolved": "https://registry.npmjs.org/@girs/json-1.0/-/json-1.0-4.1.0.tgz",
+      "integrity": "sha512-pFUhlEyaKlu4owd68kTN8aON2oAxP0IUWjgktI3jUT7rwmcHXH2AeoHPo+bEylvHgzdLea0tLROtA/a8NJpsOw==",
+      "dependencies": {
+        "@girs/gjs": "^4.1.0",
+        "@girs/gio-2.0": "^4.1.0",
+        "@girs/gobject-2.0": "^4.1.0",
+        "@girs/glib-2.0": "^4.1.0",
+        "@girs/gmodule-2.0": "^4.1.0"
       }
     },
     "node_modules/@girs/libxml2-2.0": {

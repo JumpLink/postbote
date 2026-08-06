@@ -1,0 +1,16 @@
+{
+  "name": "@postbote/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure protocol layer: IMAP (RFC 3501) response grammar, MIME (RFC 2045/2046) walking, RFC 2047 header decoding, character encodings, the shared DTOs, and the MailBackend port. No gi://, no node:*, no dependencies — so every byte of grammar is unit-testable on both runtimes.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ]
+}

@@ -21,6 +21,12 @@
     "test": "gjsify test"
   },
   "gjsify": {
+    "_comment_minify": "fixed upstream in gjsify: the minifier re-encodes the '\\u0000' escape in @postbote/protocol's IMAP literal placeholder as a RAW NUL byte, and GJS then fails to parse the bundle ('literal not terminated before end of script'). Remove this once that is fixed upstream — it is not a size preference. Verify with: tr -dc '\\000' < app/dist/postbote.gjs.mjs | wc -c",
+    "bundler": {
+      "output": {
+        "minify": false
+      }
+    },
     "excludeGlobals": [
       "document",
       "navigator",
@@ -42,6 +48,9 @@
     }
   },
   "dependencies": {
+    "@postbote/gnome": "*",
+    "@postbote/imap": "*",
+    "@postbote/protocol": "*",
     "dotenv": "^17.4.2",
     "yargs": "^18.1.0"
   },
