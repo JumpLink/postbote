@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Node-free gjsify toolchain (mirrors the buchhaltung/bauplaner CI). Everything runs on the
 # gjsify stack pinned in app/package.json: `gjsify install --immutable` (from gjsify-lock.json),
