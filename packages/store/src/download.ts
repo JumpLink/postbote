@@ -127,8 +127,24 @@ export class FileSink implements LiteralSink {
   }
 }
 
-/** Create the download directory if needed, mode 0700 — it holds private mail. */
-export function ensureDownloadDir(dir: string): string {
+/**
+ * Create a directory that will hold private mail, mode 0700.
+ *
+ * The chmod is not redundant. fixed upstream in gjsify: `mkdirSync` drops its `mode` option the
+ * same way `openSync` drops its mode argument, so the directory was created 0755 — and for the
+ * index directory that mode is the ONLY thing protecting SQLite's `-wal` companion, which
+ * SQLite creates 0644 and which holds recently written message bodies.
+ *
+ * Applied on every call rather than only at creation, so a directory whose mode drifted once
+ * does not stay wrong forever.
+ */
+export function ensurePrivateDir(dir: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(dir, 0o700);
+  } catch {
+    // A directory this process does not own (an odd mount, a shared drive) is not a reason to
+    // refuse to work — but it IS a reason not to pretend the mode was applied.
+  }
   return dir;
 }

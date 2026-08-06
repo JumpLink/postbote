@@ -16,7 +16,7 @@ import type {
   SaveAttachmentResult,
 } from '@postbote/protocol';
 import { decodingSink, safeFileName } from '@postbote/protocol';
-import { attachmentsDir, ensureDownloadDir, FileSink, resolveDownloadPath } from '@postbote/store';
+import { attachmentsDir, ensurePrivateDir, FileSink, resolveDownloadPath } from '@postbote/store';
 import { ATTACHMENT_BYTES, BODY_CHARS, capLimit, MAIL_LIMIT } from './limits.ts';
 
 /** Mail search params; folder defaults to INBOX, and no account means all of them. */
@@ -122,7 +122,7 @@ export async function mailListParts(params: MailListPartsParams): Promise<MailPa
  * through, so what lands on disk is the actual file rather than its base64 text.
  */
 export async function mailSaveAttachment(params: MailSaveAttachmentParams): Promise<SaveAttachmentResult> {
-  const directory = ensureDownloadDir(params.directory ?? attachmentsDir());
+  const directory = ensurePrivateDir(params.directory ?? attachmentsDir());
   const maxBytes = capLimit(params.maxBytes, ATTACHMENT_BYTES);
 
   let file: FileSink | null = null;

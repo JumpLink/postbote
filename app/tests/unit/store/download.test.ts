@@ -1,13 +1,13 @@
 import { describe, expect, it } from '@gjsify/unit';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { ensureDownloadDir, FileSink, isInside, resolveDownloadPath } from '@postbote/store';
+import { ensurePrivateDir, FileSink, isInside, resolveDownloadPath } from '@postbote/store';
 
 /** A scratch directory under the system temp dir — never inside the repository. */
 function scratch(): string {
-  return ensureDownloadDir(mkdtempSync(join(tmpdir(), 'postbote-test-')));
+  return ensurePrivateDir(mkdtempSync(join(tmpdir(), 'postbote-test-')));
 }
 
 export default async () => {
@@ -60,6 +60,28 @@ export default async () => {
         expect(resolveDownloadPath(dir, null, 'part-2.bin')).toBe(join(dir, 'part-2.bin'));
       } finally {
         rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  await describe('ensurePrivateDir', async () => {
+    await it('creates the directory 0700, and re-applies it', async () => {
+      // The chmod is not redundant: gjsify's mkdirSync drops its `mode` option the same way
+      // openSync drops its mode argument, so the directory came out 0755. For the index
+      // directory that mode is the ONLY protection on SQLite's `-wal` companion, which SQLite
+      // creates 0644 and which holds recently written message bodies.
+      const base = mkdtempSync(join(tmpdir(), 'postbote-mode-'));
+      try {
+        const dir = join(base, 'nested', 'private');
+        ensurePrivateDir(dir);
+        expect(statSync(dir).mode & 0o777).toBe(0o700);
+
+        // A directory whose mode drifted must be corrected, not left alone.
+        chmodSync(dir, 0o755);
+        ensurePrivateDir(dir);
+        expect(statSync(dir).mode & 0o777).toBe(0o700);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
       }
     });
   });

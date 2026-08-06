@@ -9,6 +9,7 @@
 import { ImapBackend } from '@postbote/imap';
 import type { IndexSearchCriteria, IndexedMessage, SyncResult, SyncStatus } from '@postbote/store';
 import {
+  ensurePrivateDir,
   indexDbPath,
   migrate,
   openIndexDb,
@@ -17,7 +18,7 @@ import {
   syncIndex,
   syncStatus,
 } from '@postbote/store';
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -39,7 +40,7 @@ export function openIndex(path = indexDbPath()) {
     // one: without it a fresh install has nowhere to put the database, and SQLite's `-wal` /
     // `-shm` companions are created 0644 by SQLite itself — they hold recent writes, i.e.
     // message bodies. The file mode below cannot cover them; the directory mode can.
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    ensurePrivateDir(dirname(path));
   }
   const db = openIndexDb(path);
   migrate(db);
