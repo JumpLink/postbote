@@ -1,0 +1,20 @@
+{
+  "name": "postbote",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Postbote — mail (IMAP), contacts (CardDAV) and calendar (CalDAV) through GNOME Online Accounts, as a CLI and an MCP server. Runs on GJS via gjsify.",
+  "workspaces": [
+    "packages/*",
+    "app"
+  ],
+  "scripts": {
+    "check": "gjsify foreach -A check",
+    "build": "gjsify workspace postbote-cli build",
+    "start": "gjsify workspace postbote-cli start",
+    "test": "gjsify workspace postbote-cli test",
+    "format": "gjsify workspace postbote-cli format",
+    "lint": "gjsify workspace postbote-cli lint"
+  }
+}

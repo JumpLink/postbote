@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Node-free gjsify toolchain (mirrors the buchhaltung/bauplaner CI). Everything runs on the
+# gjsify stack pinned in app/package.json: `gjsify install --immutable` (from gjsify-lock.json),
+# the bundled `gjsify tsc` type-check, `gjsify build` for the CLI bundle, and the test bundle
+# under both gjs and node. Node is present only to bootstrap the gjsify CLI (its published bin
+# is Node; its work targets gjs).
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:44
+    steps:
+      # These are load-bearing, unlike in the sibling projects. @postbote/gnome does
+      # TOP-LEVEL STATIC `gi://` imports (Goa, EDataServer, EBook, ECal), so the bundle needs
+      # those typelibs at MODULE LOAD, not merely when a call is made — without them CI cannot
+      # even import what it just built. libgda-sqlite backs `node:sqlite` for the index.
+      - name: Install system prerequisites (gjs + GOA/EDS typelibs + libgda)
+        run: >
+          dnf install -y --setopt=install_weak_deps=False
+          git tar xz findutils gjs
+          gnome-online-accounts evolution-data-server
+          libgda libgda-sqlite
+
+      - uses: actions/checkout@v4
+
+      # Node 24 to bootstrap + run the gjsify CLI. gjsify's native install-backend prebuilds
+      # target node 24 — Fedora's default node 22 loads a mismatched ABI and segfaults
+      # `gjsify install`.
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Content-addressed tarball store: a warm cache lets `gjsify install --immutable` skip
+      # the download phase. Keyed on the lockfile.
+      - name: Cache gjsify tarball store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gjsify/tarballs
+          key: gjsify-tarballs-${{ hashFiles('gjsify-lock.json') }}
+          restore-keys: gjsify-tarballs-
+
+      # Bootstrap the gjsify CLI so `gjsify install` is runnable before node_modules exists.
+      # It must be the SAME version the deps pin — a global-CLI ↔ pinned-libs mismatch produces
+      # broken bundles. Read that version out of app/package.json rather than repeating it:
+      # hardcoded, it silently fell behind in a sibling project when the pin moved.
+      - name: Bootstrap the gjsify CLI
+        run: |
+          VERSION=$(node -p "require('./app/package.json').devDependencies['@gjsify/cli']")
+          echo "Bootstrapping @gjsify/cli@$VERSION (from app/package.json)"
+          npm install -g "@gjsify/cli@$VERSION"
+
+      - name: Install dependencies (gjsify install --immutable)
+        run: gjsify install --immutable
+
+      # -A includes `private: true` workspaces. Without it every packages/* is skipped and the
+      # type-check silently covers only the app.
+      - name: Type check (app + every package)
+        run: gjsify foreach -A check
+
+      - name: Build the CLI bundle
+        run: gjsify workspace postbote-cli build
+
+      # Runs on gjs AND node. There is no session D-Bus here, so GOA/EDS are unreachable —
+      # that is expected and is what the three-state availability probe is for. The tests
+      # assert the backend reports itself unavailable cleanly; they never assert a live call
+      # succeeded.
+      - name: Tests (gjs + node)
+        run: gjsify workspace postbote-cli test

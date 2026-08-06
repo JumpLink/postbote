@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# gjsify
+.gjsify/
+
+# npm is not the package manager here — `gjsify install` is (see AGENTS.md).
+package-lock.json
+
+# ─── Secrets & personal data — NEVER commit ───────────────────────────────
+.env
+.env.*
+!.env.example
+
+# Defence in depth only. The real guarantee is that none of this is ever
+# WRITTEN here: the index defaults to $XDG_DATA_HOME/postbote/index.db and
+# attachments to $XDG_DOWNLOAD_DIR, both overridable via POSTBOTE_* — never to
+# a path inside this repo. This repository is PUBLIC, and the index holds mail
+# headers AND plain-text bodies: a committed index is a permanent leak.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-*
+*.eml
+*.mbox
+attachments/
+downloads/
+postbote-data/
+
+# Editor / OS
+.DS_Store
+*.log
