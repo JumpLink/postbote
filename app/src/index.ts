@@ -7,8 +7,11 @@ import {
   calendarCommand,
   checkCommand,
   contactsCommand,
+  foldersCommand,
   mcpCommand,
   messageCommand,
+  partsCommand,
+  saveCommand,
   searchCommand,
 } from './frontends/cli/index.ts';
 
@@ -24,6 +27,9 @@ const parseArgs = () =>
   yargs(hideBin(process.argv))
     .command(searchCommand)
     .command(messageCommand)
+    .command(partsCommand)
+    .command(saveCommand)
+    .command(foldersCommand)
     .command(accountsCommand)
     .command(contactsCommand)
     .command(calendarCommand)

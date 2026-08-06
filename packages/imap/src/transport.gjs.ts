@@ -68,6 +68,33 @@ export class ByteReader {
     this.buf = this.buf.slice(out.length);
     return out;
   }
+
+  /**
+   * Stream exactly n bytes into a sink, never holding more than one chunk.
+   *
+   * The difference from readBytes() is the whole reason attachments are usable: readBytes turns
+   * the literal into a latin1 JS string, so a 20 MB PDF costs 20 MB of bytes PLUS ~40 MB of
+   * UTF-16 string. Here peak memory is O(chunk) regardless of attachment size.
+   *
+   * Returns the number of bytes actually delivered — short only at EOF, which is a truncated
+   * transfer the caller must treat as a failure.
+   */
+  async pipeBytes(n: number, write: (chunk: Uint8Array) => void | Promise<void>): Promise<number> {
+    let remaining = n;
+    while (remaining > 0) {
+      if (this.buf.length === 0 && !(await this.fill())) break; // EOF
+      const take = Math.min(remaining, this.buf.length);
+      await write(this.buf.subarray(0, take));
+      this.buf = this.buf.slice(take);
+      remaining -= take;
+    }
+    return n - remaining;
+  }
+
+  /** Discard exactly n bytes without materializing them (used to resync after a refusal). */
+  async skipBytes(n: number): Promise<number> {
+    return this.pipeBytes(n, () => {});
+  }
 }
 
 /** Open a TLS connection to the target's IMAP port. */

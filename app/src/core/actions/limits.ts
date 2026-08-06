@@ -17,6 +17,15 @@ export const EVENT_LIMIT: LimitSpec = { default: 100, max: 500 };
 export const MAIL_LIMIT: LimitSpec = { default: 20, max: 100 };
 export const BODY_CHARS: LimitSpec = { default: 50_000, max: 200_000 };
 
+/**
+ * Attachment transfer cap, in wire octets.
+ *
+ * Checked against the size BODYSTRUCTURE declares, before a byte moves — so an oversized part
+ * costs one round trip, not an abandoned download. 25 MB is above what mail servers generally
+ * accept, so the default refuses essentially nothing that exists.
+ */
+export const ATTACHMENT_BYTES: LimitSpec = { default: 25_000_000, max: 100_000_000 };
+
 /** Default calendar window when the caller gives neither `from` nor `to`. */
 export const EVENT_WINDOW_DAYS = 31;
 

@@ -1,3 +1,5 @@
+import type { MailSearchCriteria } from './search-plan.ts';
+
 /**
  * Plain-JS data shapes returned by the GNOME (GOA/EDS) binding.
  *
@@ -133,19 +135,83 @@ export interface MailMessageDTO extends MailSummaryDTO {
   attachments: MailAttachmentDTO[];
 }
 
-export interface SearchMailOptions {
+export interface SearchMailOptions extends MailSearchCriteria {
   /** Restrict to one GOA mail account id; omit to search all mail accounts. */
   accountId?: string;
-  /** Mailbox to search (default "INBOX"). */
+  /**
+   * Mailbox to search. Accepts a wire name, a display name, a role (`sent`) or a path leaf.
+   * Ignored when `allFolders` is set. Defaults to INBOX.
+   */
   folder?: string;
-  /** Free-text query → IMAP `TEXT`; omit for the most recent messages. */
-  query?: string;
-  /** Only unseen messages (IMAP `UNSEEN`). */
-  unseenOnly?: boolean;
-  /** Only messages since this date, YYYY-MM-DD (IMAP `SINCE`). */
-  since?: string;
+  /** Search every searchable mailbox instead of one (excludes All Mail, Trash and Junk). */
+  allFolders?: boolean;
   /** Cap the number of returned summaries. */
   limit?: number;
+}
+
+/** One mailbox as reported to a caller, with the account it belongs to. */
+export interface FolderDTO {
+  accountId: string;
+  /** Wire name (modified UTF-7) — pass this back as `folder` for an exact match. */
+  path: string;
+  /** Decoded display name. */
+  name: string;
+  delimiter: string | null;
+  selectable: boolean;
+  role: string | null;
+  /** Where the role came from: `special-use`, `heuristic`, `name`, or null. */
+  roleSource: string | null;
+  /** Message count, when it was cheap to obtain. */
+  messages: number | null;
+}
+
+/** One fetchable part of a message, as reported by `mail_list_parts`. */
+export interface MailPartDTO {
+  /** IMAP section — pass this to save the part. */
+  section: string;
+  mimeType: string;
+  filename: string | null;
+  disposition: string | null;
+  /** Encoded size in octets, i.e. what a transfer actually costs. */
+  size: number;
+  /** True if this is what a user would call an attachment. */
+  attachment: boolean;
+}
+
+export interface ListPartsOptions {
+  accountId: string;
+  uid: string;
+  folder?: string;
+}
+
+export interface FetchPartOptions {
+  accountId: string;
+  uid: string;
+  folder?: string;
+  /** IMAP section, from `listParts`. Omit to take the first attachment. */
+  section?: string;
+  /** Refuse anything larger, before any bytes move. */
+  maxBytes: number;
+}
+
+/** Part metadata a caller gets BEFORE the bytes, so it can name the file from real data. */
+export interface FetchPartInfo {
+  section: string;
+  mimeType: string;
+  filename: string | null;
+  /** Encoded octets, as declared by BODYSTRUCTURE. */
+  size: number;
+  /** Content-Transfer-Encoding, uppercased — what the bytes must be decoded from. */
+  encoding: string;
+}
+
+/** Result of writing one attachment to disk. */
+export interface SaveAttachmentResult {
+  path: string;
+  filename: string;
+  bytes: number;
+  mimeType: string;
+  section: string;
 }
 
 export interface GetMessageOptions {

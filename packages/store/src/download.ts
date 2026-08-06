@@ -1,0 +1,134 @@
+/**
+ * Writing an attachment to disk, safely.
+ *
+ * `safeFileName` in @postbote/protocol has already reduced a hostile MIME name to one path
+ * segment. This is DEFENCE IN DEPTH on top of that, not a substitute: the resolved path is
+ * checked to still be inside the target directory, so a bug or a future change in the sanitizer
+ * cannot turn into a write outside it.
+ */
+
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from 'node:fs';
+import { isAbsolute, join, resolve, sep } from 'node:path';
+
+import { type LiteralSink, safeFileName } from '@postbote/protocol';
+
+/** True when `target` is `dir` itself or below it, after both are fully resolved. */
+export function isInside(dir: string, target: string): boolean {
+  const base = resolve(dir);
+  const path = resolve(target);
+  return path === base || path.startsWith(base.endsWith(sep) ? base : base + sep);
+}
+
+/**
+ * Resolve a safe absolute path for a downloaded file, refusing to leave `dir`.
+ *
+ * Never overwrites: an existing name gains ` (2)`, ` (3)`, … A silent overwrite of a file the
+ * user already has is data loss caused by a stranger choosing a filename.
+ */
+export function resolveDownloadPath(dir: string, rawName: string | null, fallback = 'attachment'): string {
+  const name = safeFileName(rawName, fallback);
+  const target = resolve(join(dir, name));
+  if (!isInside(dir, target)) {
+    // Unreachable via safeFileName, which returns a single segment. Kept because "unreachable"
+    // is a property of today's code, and this is the check that makes it a property of any code.
+    throw new Error(`refusing to write outside ${dir}`);
+  }
+
+  if (!existsSync(target)) return target;
+
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 2; n < 1000; n++) {
+    const candidate = resolve(join(dir, `${stem} (${n})${ext}`));
+    if (!existsSync(candidate)) return candidate;
+  }
+  throw new Error(`too many files named like ${name} in ${dir}`);
+}
+
+/**
+ * A sink that writes to a temporary file and renames it into place only on success.
+ *
+ * Two properties matter:
+ *   - Mode 0600 from creation, because an attachment is private mail. Creating it 0644 and
+ *     chmod-ing after leaves a window where it is world-readable.
+ *   - `.part` + rename, so a failed or refused transfer leaves NO file. A half-written PDF that
+ *     opens and shows the first three pages is worse than no file at all.
+ */
+export class FileSink implements LiteralSink {
+  readonly path: string;
+  private readonly tmpPath: string;
+  private fd: number | null = null;
+  private written = 0;
+
+  constructor(path: string) {
+    if (!isAbsolute(path)) throw new Error(`FileSink needs an absolute path, got ${path}`);
+    this.path = path;
+    this.tmpPath = `${path}.part`;
+    // fixed upstream in gjsify: openSync's 'wx' fell through to plain 'w' on GJS (fopen(3) has
+    // no exclusive mode), so it TRUNCATED an existing .part instead of throwing EEXIST — two
+    // concurrent saves would have interleaved into one file. Drop this pre-check once the fix
+    // ships; 'wx' below then enforces it, and more atomically than a check can.
+    if (existsSync(this.tmpPath)) {
+      const err = new Error(`EEXIST: transfer already in progress, open '${this.tmpPath}'`);
+      (err as NodeJS.ErrnoException).code = 'EEXIST';
+      throw err;
+    }
+    this.fd = openSync(this.tmpPath, 'wx', 0o600);
+    // fixed upstream in gjsify: openSync IGNORES its mode argument on GJS (GLib.IOChannel has no
+    // mode-aware open, and the parsed `mode` is never applied), so the file was created 0644 —
+    // world-readable private mail. chmod immediately narrows it; there is a brief window where
+    // it is not 0600, which is why the real fix belongs in the open itself.
+    chmodSync(this.tmpPath, 0o600);
+  }
+
+  write(chunk: Uint8Array): void {
+    if (this.fd === null) throw new Error('write after close');
+    // The explicit position is not optional here. fixed upstream in gjsify: writeSync tracked no
+    // write cursor, so `writeSync(fd, chunk)` restarted at offset 0 every call and a streamed
+    // download ended up holding only its LAST chunk. Passing the offset is correct on Node too,
+    // so this stays valid after the fix ships — it is simply no longer load-bearing.
+    writeSync(this.fd, chunk, 0, chunk.length, this.written);
+    this.written += chunk.length;
+  }
+
+  close(): void {
+    if (this.fd === null) return;
+    closeSync(this.fd);
+    this.fd = null;
+    renameSync(this.tmpPath, this.path);
+  }
+
+  abort(_reason: string): void {
+    if (this.fd !== null) {
+      closeSync(this.fd);
+      this.fd = null;
+    }
+    // Best effort: if the temp file is already gone, there is nothing to clean up.
+    try {
+      unlinkSync(this.tmpPath);
+    } catch {
+      // The failure that matters — a leftover .part — is visible and harmless; a throw here
+      // would mask the real error that caused the abort.
+    }
+  }
+
+  get bytesWritten(): number {
+    return this.written;
+  }
+}
+
+/** Create the download directory if needed, mode 0700 — it holds private mail. */
+export function ensureDownloadDir(dir: string): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}

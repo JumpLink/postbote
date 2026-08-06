@@ -53,6 +53,7 @@
     "@postbote/gnome": "*",
     "@postbote/imap": "*",
     "@postbote/protocol": "*",
+    "@postbote/store": "*",
     "dotenv": "^17.4.2",
     "yargs": "^18.1.0",
     "zod": "^4.4.3"

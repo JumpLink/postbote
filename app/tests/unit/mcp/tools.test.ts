@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@gjsify/unit';
 
 import {
+  ATTACHMENT_BYTES,
   BODY_CHARS,
   CONTACT_LIMIT,
   EVENT_LIMIT,
@@ -32,6 +33,7 @@ const BOUNDED: Array<{ tool: string; field: string; spec: LimitSpec }> = [
   { tool: 'mail_get_message', field: 'max_body_chars', spec: BODY_CHARS },
   { tool: 'contacts_search', field: 'limit', spec: CONTACT_LIMIT },
   { tool: 'calendar_list_events', field: 'limit', spec: EVENT_LIMIT },
+  { tool: 'mail_save_attachment', field: 'max_bytes', spec: ATTACHMENT_BYTES },
 ];
 
 export default async () => {
@@ -46,6 +48,9 @@ export default async () => {
         'calendar_list_events',
         'contacts_search',
         'mail_get_message',
+        'mail_list_folders',
+        'mail_list_parts',
+        'mail_save_attachment',
         'mail_search',
       ]);
     });

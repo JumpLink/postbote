@@ -9,6 +9,16 @@ import backends from './unit/backends.test.ts';
 import imapParse from './unit/protocol/imap-parse.test.ts';
 import mimeParse from './unit/protocol/mime-parse.test.ts';
 import bodySection from './unit/protocol/body-section.test.ts';
+import mutf7 from './unit/protocol/mutf7.test.ts';
+import rfc2231 from './unit/protocol/rfc2231.test.ts';
+import listParse from './unit/protocol/list-parse.test.ts';
+import searchPlan from './unit/protocol/search-plan.test.ts';
+import bodyStructure from './unit/protocol/bodystructure.test.ts';
+import safeFilename from './unit/protocol/safe-filename.test.ts';
+import transferDecode from './unit/protocol/transfer-decode.test.ts';
+
+import storePaths from './unit/store/paths.test.ts';
+import storeDownload from './unit/store/download.test.ts';
 
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
@@ -22,6 +32,15 @@ run({
   imapParse,
   mimeParse,
   bodySection,
+  mutf7,
+  rfc2231,
+  listParse,
+  searchPlan,
+  bodyStructure,
+  safeFilename,
+  transferDecode,
+  storePaths,
+  storeDownload,
   date,
   limits,
   mcpGate,

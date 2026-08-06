@@ -37,6 +37,9 @@ const EXPECTED_TOOLS = [
   'calendar_list_events',
   'contacts_search',
   'mail_get_message',
+  'mail_list_folders',
+  'mail_list_parts',
+  'mail_save_attachment',
   'mail_search',
 ];
 
