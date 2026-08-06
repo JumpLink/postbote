@@ -18,7 +18,8 @@
     "build:gjs": "gjsify build src/index.ts --app gjs --outfile dist/postbote.gjs.mjs",
     "start": "gjsify run dist/postbote.gjs.mjs",
     "dev": "gjsify run build:gjs && gjsify run start",
-    "test": "gjsify test"
+    "test": "gjsify test",
+    "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs"
   },
   "gjsify": {
     "_comment_minify": "fixed upstream in gjsify: the minifier re-encodes the '\\u0000' escape in @postbote/protocol's IMAP literal placeholder as a RAW NUL byte, and GJS then fails to parse the bundle ('literal not terminated before end of script'). Remove this once that is fixed upstream — it is not a size preference. Verify with: tr -dc '\\000' < app/dist/postbote.gjs.mjs | wc -c",
@@ -48,11 +49,13 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@postbote/gnome": "*",
     "@postbote/imap": "*",
     "@postbote/protocol": "*",
     "dotenv": "^17.4.2",
-    "yargs": "^18.1.0"
+    "yargs": "^18.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@gjsify/cli": "0.30.0",

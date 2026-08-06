@@ -23,7 +23,7 @@ is built on, which is where this is headed.
 - **Contacts** and **calendar** — read the address books and calendars that
   Evolution Data Server keeps in sync for your online accounts.
 - **Local index** — an optional SQLite full-text index so repeated searches are
-  instant and work offline.
+  instant and work offline. *(planned — see below for what ships today)*
 
 Everything is **read-only**. Messages are fetched with IMAP `BODY.PEEK`, so
 opening a mail through Postbote never marks it as read.
@@ -50,23 +50,32 @@ gjsify run app/dist/postbote.gjs.mjs accounts
 ## Use it
 
 ```bash
+postbote check                             # which backends are reachable
 postbote accounts                          # which online accounts are available
-postbote folders --account <id>            # mailboxes, with their roles
-postbote search --from berater --since 2025-01-01
-postbote show <uid> --account <id>
-postbote parts <uid> --account <id>        # what is attached
-postbote save <uid> --account <id> --name report.pdf
-postbote sync                              # build the local index
+postbote search "energieberater" --since 2025-01-01 --limit 20
+postbote message <uid> --account <id>      # one message: body + attachment list
+postbote contacts --query maier
+postbote calendar --from 2026-09-01 --to 2026-09-30
 ```
 
-Every command takes `--json` and returns the same shapes the MCP tools do.
+Every command prints JSON — the same shapes the MCP tools return.
+
+`search` returns headers only, never bodies; reading one message is a separate,
+explicit call. Not a policy that can be flipped with a flag: the search path has
+no code that can fetch a body.
+
+*Not built yet:* `folders`, `parts`, `save` and `sync`, and the structured
+`--from` / `--to` / `--subject` search filters. Today `search` takes free text
+plus `--since`, `--unseen`, `--folder`, `--account` and `--limit`, and looks in
+one folder (`INBOX` by default).
 
 ## As an MCP server
 
-`postbote mcp` speaks MCP over stdio. Registered in an MCP client, it exposes
-`mail_search`, `mail_get_message`, `mail_list_folders`, `mail_list_parts`,
-`mail_save_attachment`, `mail_sync_status`, `contacts_search`,
-`calendar_list_events` and `accounts_list`.
+`postbote mcp` speaks MCP over stdio. Registered in an MCP client it currently
+exposes `mail_search`, `mail_get_message`, `contacts_search`,
+`calendar_list_events` and `accounts_list`; `mail_list_folders`,
+`mail_list_parts`, `mail_save_attachment` and `mail_sync_status` follow with the
+features above.
 
 The server is read-only by default and **fails closed**: a tool is registered
 only if it declares itself read-only, so a future tool that forgets the

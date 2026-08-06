@@ -2,7 +2,15 @@ import 'dotenv/config';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
-import { checkCommand } from './frontends/cli/index.ts';
+import {
+  accountsCommand,
+  calendarCommand,
+  checkCommand,
+  contactsCommand,
+  mcpCommand,
+  messageCommand,
+  searchCommand,
+} from './frontends/cli/index.ts';
 
 function reportError(err: unknown): void {
   // With yargs' `.fail(false)` (below) yargs no longer prints its own usage dump on a
@@ -14,6 +22,12 @@ function reportError(err: unknown): void {
 
 const parseArgs = () =>
   yargs(hideBin(process.argv))
+    .command(searchCommand)
+    .command(messageCommand)
+    .command(accountsCommand)
+    .command(contactsCommand)
+    .command(calendarCommand)
+    .command(mcpCommand)
     .command(checkCommand)
     .demandCommand(1, 'Please provide a command — `postbote --help` lists them all.')
     // Reject unknown commands instead of silently resolving — on GJS an unmatched command
@@ -21,6 +35,10 @@ const parseArgs = () =>
     // With this, both reject → reportError → exit 1.
     .strictCommands()
     .scriptName('postbote')
+    // Pin the locale: yargs otherwise translates its own chrome ("Commands:", "Options:") from
+    // $LANG while every describe string here stays English, so a German shell got a half-German
+    // help screen. It also keeps --help byte-stable across machines and CI.
+    .locale('en')
     .help()
     // Don't let yargs print its own multi-line usage dump on a validation/demandCommand failure
     // — it otherwise doubled with the hint we print in reportError (once from yargs, once from
