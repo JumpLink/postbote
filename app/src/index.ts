@@ -8,11 +8,13 @@ import {
   checkCommand,
   contactsCommand,
   foldersCommand,
+  indexCommand,
   mcpCommand,
   messageCommand,
   partsCommand,
   saveCommand,
   searchCommand,
+  syncCommand,
 } from './frontends/cli/index.ts';
 
 function reportError(err: unknown): void {
@@ -30,6 +32,8 @@ const parseArgs = () =>
     .command(partsCommand)
     .command(saveCommand)
     .command(foldersCommand)
+    .command(syncCommand)
+    .command(indexCommand)
     .command(accountsCommand)
     .command(contactsCommand)
     .command(calendarCommand)

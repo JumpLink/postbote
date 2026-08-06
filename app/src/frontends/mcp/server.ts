@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerAccountsTools } from './tools/accounts.ts';
 import { registerCalendarTools } from './tools/calendar.ts';
 import { registerContactsTools } from './tools/contacts.ts';
+import { registerIndexTools } from './tools/index-sync.ts';
 import { registerMailTools } from './tools/mail.ts';
 import { applyReadOnlyGate, serveStdio } from './runtime.ts';
 
@@ -21,6 +22,7 @@ const SERVER_VERSION = '0.1.0';
 /** Every registrar, in the order their tools should appear. */
 const REGISTRARS: Array<(server: McpServer) => void> = [
   registerMailTools,
+  registerIndexTools,
   registerContactsTools,
   registerCalendarTools,
   registerAccountsTools,

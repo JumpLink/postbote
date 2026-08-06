@@ -41,6 +41,8 @@ const EXPECTED_TOOLS = [
   'mail_list_parts',
   'mail_save_attachment',
   'mail_search',
+  'mail_search_local',
+  'mail_sync_status',
 ];
 
 // ── 1. handshake, catalogue, and one real call ──────────────────────────────

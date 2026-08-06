@@ -11,12 +11,14 @@ import {
 import { registerAccountsTools } from '../../../src/frontends/mcp/tools/accounts.ts';
 import { registerCalendarTools } from '../../../src/frontends/mcp/tools/calendar.ts';
 import { registerContactsTools } from '../../../src/frontends/mcp/tools/contacts.ts';
+import { registerIndexTools } from '../../../src/frontends/mcp/tools/index-sync.ts';
 import { registerMailTools } from '../../../src/frontends/mcp/tools/mail.ts';
 import { createRecorder, type Recorder } from './recorder.ts';
 
 function registerAll(): Recorder {
   const rec = createRecorder();
   registerMailTools(rec.server);
+  registerIndexTools(rec.server);
   registerContactsTools(rec.server);
   registerCalendarTools(rec.server);
   registerAccountsTools(rec.server);
@@ -34,6 +36,7 @@ const BOUNDED: Array<{ tool: string; field: string; spec: LimitSpec }> = [
   { tool: 'contacts_search', field: 'limit', spec: CONTACT_LIMIT },
   { tool: 'calendar_list_events', field: 'limit', spec: EVENT_LIMIT },
   { tool: 'mail_save_attachment', field: 'max_bytes', spec: ATTACHMENT_BYTES },
+  { tool: 'mail_search_local', field: 'limit', spec: MAIL_LIMIT },
 ];
 
 export default async () => {
@@ -52,6 +55,8 @@ export default async () => {
         'mail_list_parts',
         'mail_save_attachment',
         'mail_search',
+        'mail_search_local',
+        'mail_sync_status',
       ]);
     });
 

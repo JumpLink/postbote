@@ -252,6 +252,16 @@ export class ImapClient {
     return this.command(`UID FETCH ${uids.join(',')} (UID FLAGS RFC822.SIZE ENVELOPE)`);
   }
 
+  /**
+   * FETCH an arbitrary UID range with an arbitrary item list — the sync engine's workhorse.
+   *
+   * `range` is a raw IMAP sequence like `42:*` or `1:*`, and is built by this package, never
+   * from user input.
+   */
+  async fetchRange(range: string, items: string): Promise<ImapResponse> {
+    return this.command(`UID FETCH ${range} ${items}`);
+  }
+
   /** FETCH header/metadata plus the part tree, for indexing and for listing attachments. */
   async fetchSummariesWithStructure(uids: number[]): Promise<ImapResponse> {
     return this.command(

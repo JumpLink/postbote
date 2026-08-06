@@ -19,6 +19,8 @@ import transferDecode from './unit/protocol/transfer-decode.test.ts';
 
 import storePaths from './unit/store/paths.test.ts';
 import storeDownload from './unit/store/download.test.ts';
+import storeFts from './unit/store/fts.test.ts';
+import storeSync from './unit/store/sync.test.ts';
 
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
@@ -41,6 +43,8 @@ run({
   transferDecode,
   storePaths,
   storeDownload,
+  storeFts,
+  storeSync,
   date,
   limits,
   mcpGate,

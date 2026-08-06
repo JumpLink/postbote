@@ -48,3 +48,17 @@ export async function fetchPart(
 ): Promise<{ info: FetchPartInfo; bytes: number }> {
   throw new GnomeUnavailableError(GJS_REQUIRED_MESSAGE);
 }
+
+/**
+ * A backend that cannot connect. Exists so the Node entry keeps the same shape as the GJS one —
+ * a missing export here type-checks the whole app against `undefined`.
+ */
+export class ImapBackend {
+  async listAccounts(): Promise<never> {
+    throw new GnomeUnavailableError(GJS_REQUIRED_MESSAGE);
+  }
+
+  async connect(): Promise<never> {
+    throw new GnomeUnavailableError(GJS_REQUIRED_MESSAGE);
+  }
+}

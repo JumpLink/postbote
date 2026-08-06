@@ -152,6 +152,10 @@ export interface ParsedFetch {
   flags: string[];
   size: number | null;
   envelope: ImapValue;
+  /** INTERNALDATE (arrival) as an ISO-8601 string, or null. */
+  internalDate: string | null;
+  /** The BODYSTRUCTURE value, for the part walker. */
+  bodyStructure: ImapValue;
 }
 
 /**
@@ -159,7 +163,14 @@ export interface ParsedFetch {
  * `items` is the tokenized parenthesized list (key value key value …).
  */
 export function parseFetchAttributes(items: ImapValue[]): ParsedFetch {
-  const result: ParsedFetch = { uid: null, flags: [], size: null, envelope: null };
+  const result: ParsedFetch = {
+    uid: null,
+    flags: [],
+    size: null,
+    envelope: null,
+    internalDate: null,
+    bodyStructure: null,
+  };
   for (let i = 0; i + 1 < items.length; i += 2) {
     const key = String(items[i]).toUpperCase();
     const value = items[i + 1];
@@ -175,6 +186,17 @@ export function parseFetchAttributes(items: ImapValue[]): ParsedFetch {
         break;
       case 'ENVELOPE':
         result.envelope = value;
+        break;
+      case 'INTERNALDATE': {
+        // IMAP's own date-time form, e.g. `17-Jul-2026 09:44:12 +0200`. Date.parse handles it
+        // once the day/month separator is a space rather than a hyphen.
+        const raw = typeof value === 'string' ? value.replace(/^(\d{1,2})-(\w{3})-(\d{4})/, '$2 $1 $3') : '';
+        const ms = raw ? Date.parse(raw) : Number.NaN;
+        result.internalDate = Number.isNaN(ms) ? null : new Date(ms).toISOString();
+        break;
+      }
+      case 'BODYSTRUCTURE':
+        result.bodyStructure = value;
         break;
     }
   }
