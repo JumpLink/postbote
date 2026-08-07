@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Postbote app: the `postbote` binary — CLI + MCP frontends over the @postbote/* packages, bundled to a single .gjs.mjs and run on GJS via gjsify.",
+  "description": "Postbote app: the `postbote` binary \u2014 CLI + MCP frontends over the @postbote/* packages, bundled to a single .gjs.mjs and run on GJS via gjsify.",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -22,7 +22,7 @@
     "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs"
   },
   "gjsify": {
-    "_comment_minify": "fixed upstream in gjsify: the minifier re-encodes the '\\u0000' escape in @postbote/protocol's IMAP literal placeholder as a RAW NUL byte, and GJS then fails to parse the bundle ('literal not terminated before end of script'). Remove this once that is fixed upstream — it is not a size preference. Verify with: tr -dc '\\000' < app/dist/postbote.gjs.mjs | wc -c",
+    "_comment_minify": "fixed upstream in gjsify (PR #1035): the minifier inlines @postbote/protocol's IMAP literal placeholder and emits a RAW NUL byte, which GJS truncates the module at ('literal not terminated before end of script'). The CLI now escapes it on the way out. Remove this block once a release carrying that fix is in \u2014 it is not a size preference. Verify with: tr -dc '\\000' < app/dist/postbote.gjs.mjs | wc -c",
     "bundler": {
       "output": {
         "minify": false
@@ -45,7 +45,10 @@
     "test": {
       "entry": "tests/test.mts",
       "outdir": "dist",
-      "runtimes": ["gjs", "node"]
+      "runtimes": [
+        "gjs",
+        "node"
+      ]
     }
   },
   "dependencies": {
