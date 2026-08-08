@@ -109,9 +109,11 @@ things at bump time**:
 - `// gjsify gap (unfixed, <PR>): …` — no upstream fix exists yet. The shim is **load-bearing**;
   leave it however redundant it looks.
 
-`packages/store/src/download.ts` carries three of the second kind (gjsify#1035, a parked draft
-that needs a redesign). They are the only reason attachments are 0600 rather than
-world-readable, and the only reason a streamed download is not just its last chunk.
+**Neither marker is a substitute for measuring.** `download.ts` carried three of the second kind
+against gjsify#1035; the fix arrived as #1039 instead, so the marker named a PR that was still
+open while the behaviour it described had already changed. A bump re-measures the behaviour and
+believes the result, not the note — that is a four-line probe, and it is how those three shims
+came out in 0.32.0.
 
 `app/src/frontends/mcp/runtime.ts` is an **extraction candidate** for a future `@gjsify/mcp`:
 keep it free of postbote imports so it can move verbatim.
