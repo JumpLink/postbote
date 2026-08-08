@@ -22,12 +22,6 @@
     "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs"
   },
   "gjsify": {
-    "_comment_minify": "fixed upstream in gjsify (PR #1035): the minifier inlines @postbote/protocol's IMAP literal placeholder and emits a RAW NUL byte, which GJS truncates the module at ('literal not terminated before end of script'). The CLI now escapes it on the way out. Remove this block once a release carrying that fix is in \u2014 it is not a size preference. Verify with: tr -dc '\\000' < app/dist/postbote.gjs.mjs | wc -c",
-    "bundler": {
-      "output": {
-        "minify": false
-      }
-    },
     "excludeGlobals": [
       "document",
       "navigator",
@@ -62,10 +56,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@gjsify/cli": "0.30.0",
-    "@gjsify/node-globals": "0.30.0",
-    "@gjsify/runtime": "0.30.0",
-    "@gjsify/unit": "0.30.0",
+    "@gjsify/cli": "0.31.0",
+    "@gjsify/node-globals": "0.31.0",
+    "@gjsify/rolldown-native": "0.31.0",
+    "@gjsify/runtime": "0.31.0",
+    "@gjsify/unit": "0.31.0",
     "@types/node": "^26.1.2",
     "@types/yargs": "^17.0.35",
     "oxfmt": "^0.56.0",
