@@ -66,10 +66,10 @@ export default async () => {
 
   await describe('ensurePrivateDir', async () => {
     await it('creates the directory 0700, and re-applies it', async () => {
-      // The chmod is not redundant: gjsify's mkdirSync drops its `mode` option the same way
-      // openSync drops its mode argument, so the directory came out 0755. For the index
-      // directory that mode is the ONLY protection on SQLite's `-wal` companion, which SQLite
-      // creates 0644 and which holds recently written message bodies.
+      // For the index directory this mode is the ONLY protection on SQLite's `-wal` companion,
+      // which SQLite creates 0644 and which holds recently written message bodies. gjsify's
+      // mkdirSync dropped its `mode` option until 0.32.0 (gjsify#1039), so this assertion is
+      // what re-measures the guarantee at every version bump rather than trusting a comment.
       const base = mkdtempSync(join(tmpdir(), 'postbote-mode-'));
       try {
         const dir = join(base, 'nested', 'private');
@@ -107,8 +107,10 @@ export default async () => {
     });
 
     await it('creates the file 0600 — an attachment is private mail', async () => {
-      // Regression cover for a real leak: gjsify's openSync ignores its mode argument, so the
-      // file was created 0644 and every local user could read the user's mail attachments.
+      // Regression cover for a real leak: gjsify's openSync ignored its mode argument until
+      // 0.32.0 (gjsify#1039), so the file was created 0644 and every local user could read the
+      // user's mail attachments. The `.part` is asserted too — the window matters, not just the
+      // end state — and this is the check that catches the guarantee silently going away again.
       const dir = scratch();
       try {
         const path = join(dir, 'private.bin');
