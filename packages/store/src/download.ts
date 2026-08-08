@@ -74,29 +74,32 @@ export class FileSink implements LiteralSink {
     if (!isAbsolute(path)) throw new Error(`FileSink needs an absolute path, got ${path}`);
     this.path = path;
     this.tmpPath = `${path}.part`;
-    // fixed upstream in gjsify: openSync's 'wx' fell through to plain 'w' on GJS (fopen(3) has
-    // no exclusive mode), so it TRUNCATED an existing .part instead of throwing EEXIST — two
-    // concurrent saves would have interleaved into one file. Drop this pre-check once the fix
-    // ships; 'wx' below then enforces it, and more atomically than a check can.
+    // gjsify gap (unfixed, draft gjsify#1035): openSync's 'wx' falls through to plain 'w' on GJS
+    // (fopen(3) has no exclusive mode), so it TRUNCATES an existing .part instead of throwing
+    // EEXIST — two concurrent saves would interleave into one file. This pre-check is
+    // load-bearing; do NOT remove it on a version bump. Once 'wx' enforces this upstream, drop
+    // the check — the flag is atomic and a check is not.
     if (existsSync(this.tmpPath)) {
       const err = new Error(`EEXIST: transfer already in progress, open '${this.tmpPath}'`);
       (err as NodeJS.ErrnoException).code = 'EEXIST';
       throw err;
     }
     this.fd = openSync(this.tmpPath, 'wx', 0o600);
-    // fixed upstream in gjsify: openSync IGNORES its mode argument on GJS (GLib.IOChannel has no
-    // mode-aware open, and the parsed `mode` is never applied), so the file was created 0644 —
-    // world-readable private mail. chmod immediately narrows it; there is a brief window where
-    // it is not 0600, which is why the real fix belongs in the open itself.
+    // gjsify gap (unfixed, draft gjsify#1035): openSync IGNORES its mode argument on GJS
+    // (GLib.IOChannel has no mode-aware open, and the parsed `mode` is never applied), so the
+    // file is created 0644 — world-readable private mail. This chmod immediately narrows it and
+    // is load-bearing; do NOT remove it on a version bump. It leaves a brief window where the
+    // file is not 0600, which is why the real fix belongs in the open itself.
     chmodSync(this.tmpPath, 0o600);
   }
 
   write(chunk: Uint8Array): void {
     if (this.fd === null) throw new Error('write after close');
-    // The explicit position is not optional here. fixed upstream in gjsify: writeSync tracked no
-    // write cursor, so `writeSync(fd, chunk)` restarted at offset 0 every call and a streamed
-    // download ended up holding only its LAST chunk. Passing the offset is correct on Node too,
-    // so this stays valid after the fix ships — it is simply no longer load-bearing.
+    // The explicit position is not optional here. gjsify gap (unfixed, draft gjsify#1035):
+    // writeSync tracks no write cursor on GJS, so `writeSync(fd, chunk)` restarts at offset 0
+    // every call and a streamed download ends up holding only its LAST chunk. Passing the offset
+    // is correct on Node too, so this stays valid after any upstream fix — it simply stops being
+    // load-bearing.
     writeSync(this.fd, chunk, 0, chunk.length, this.written);
     this.written += chunk.length;
   }
@@ -130,10 +133,10 @@ export class FileSink implements LiteralSink {
 /**
  * Create a directory that will hold private mail, mode 0700.
  *
- * The chmod is not redundant. fixed upstream in gjsify: `mkdirSync` drops its `mode` option the
- * same way `openSync` drops its mode argument, so the directory was created 0755 — and for the
- * index directory that mode is the ONLY thing protecting SQLite's `-wal` companion, which
- * SQLite creates 0644 and which holds recently written message bodies.
+ * The chmod is not redundant. gjsify gap (unfixed, draft gjsify#1035): `mkdirSync` drops its
+ * `mode` option the same way `openSync` drops its mode argument, so the directory is created
+ * 0755 — and for the index directory that mode is the ONLY thing protecting SQLite's `-wal`
+ * companion, which SQLite creates 0644 and which holds recently written message bodies.
  *
  * Applied on every call rather than only at creation, so a directory whose mode drifted once
  * does not stay wrong forever.

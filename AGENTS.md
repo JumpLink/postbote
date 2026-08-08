@@ -100,8 +100,18 @@ the MCP server via `run_in_background` when driving it.
 
 gjsify is a first-party dependency, not vendored third-party code. If a capability is missing
 or broken there, fix it in the `gjsify/gjsify` submodule with a test and let postbote pick it
-up via a version bump — do not paper over it here. If a temporary shim is unavoidable, leave a
-`// fixed upstream in gjsify: <one-line>` note so it gets removed on the next bump.
+up via a version bump — do not paper over it here.
+
+A shim that is unavoidable meanwhile carries **one of two markers, and they mean opposite
+things at bump time**:
+
+- `// fixed upstream in gjsify: …` — the fix has LANDED. Delete the shim at the next bump.
+- `// gjsify gap (unfixed, <PR>): …` — no upstream fix exists yet. The shim is **load-bearing**;
+  leave it however redundant it looks.
+
+`packages/store/src/download.ts` carries three of the second kind (gjsify#1035, a parked draft
+that needs a redesign). They are the only reason attachments are 0600 rather than
+world-readable, and the only reason a streamed download is not just its last chunk.
 
 `app/src/frontends/mcp/runtime.ts` is an **extraction candidate** for a future `@gjsify/mcp`:
 keep it free of postbote imports so it can move verbatim.
