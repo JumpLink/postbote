@@ -56,11 +56,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@gjsify/cli": "0.32.0",
-    "@gjsify/node-globals": "0.32.0",
-    "@gjsify/rolldown-native": "0.32.0",
-    "@gjsify/runtime": "0.32.0",
-    "@gjsify/unit": "0.32.0",
+    "@gjsify/cli": "0.33.0",
+    "@gjsify/node-globals": "0.33.0",
+    "@gjsify/rolldown-native": "0.33.0",
+    "@gjsify/runtime": "0.33.0",
+    "@gjsify/unit": "0.33.0",
     "@types/node": "^26.1.2",
     "@types/yargs": "^17.0.35",
     "oxfmt": "^0.56.0",
