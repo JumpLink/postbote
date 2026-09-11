@@ -2,7 +2,7 @@
   "name": "postbote",
   "version": "0.1.0",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "description": "Postbote — mail (IMAP), contacts (CardDAV) and calendar (CalDAV) through GNOME Online Accounts, as a CLI and an MCP server. Runs on GJS via gjsify.",
   "workspaces": [

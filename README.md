@@ -113,4 +113,8 @@ See [AGENTS.md](AGENTS.md).
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-or-later](LICENSE) © Pascal Garber.
+
+Free to use, modify and share. The AGPL adds one condition to the GPL: anyone who
+runs this program **as a network service** must offer that service's users the
+source of their version. Running it locally for yourself adds no obligation.

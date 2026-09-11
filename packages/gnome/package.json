@@ -1,6 +1,7 @@
 {
   "name": "@postbote/gnome",
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "description": "GNOME Online Accounts (GOA) + Evolution Data Server binding: accounts, contacts, calendar, and the IMAP credentials the mail layer connects with. The real implementation is GJS-only (native gi:// typelibs); the Node entry is an unavailable stub. Requires the system GOA/EDS typelibs at runtime — nothing is bundled or published.",

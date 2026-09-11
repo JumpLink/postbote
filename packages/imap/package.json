@@ -1,6 +1,7 @@
 {
   "name": "@postbote/imap",
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "description": "IMAP over Gio TLS sockets: transport, a minimal RFC 3501 client, and mail search / single-message fetch. GJS-only (the Node entry is an unavailable stub); all response and MIME parsing lives in @postbote/protocol.",

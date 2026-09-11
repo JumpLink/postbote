@@ -1,6 +1,7 @@
 {
   "name": "@postbote/store",
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "description": "Local state: XDG paths, safe attachment writing, and the SQLite full-text index with its sync engine. Uses node:* only — never gi://, not even transitively — so the sync algorithm is unit-testable on Node against a fake backend and an in-memory database.",
