@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerAccountsTools } from './tools/accounts.ts';
 import { registerCalendarTools } from './tools/calendar.ts';
 import { registerContactsTools } from './tools/contacts.ts';
+import { registerGateCanary } from './tools/gate-canary.ts';
 import { registerIndexTools } from './tools/index-sync.ts';
 import { registerMailTools } from './tools/mail.ts';
 import { applyReadOnlyGate, serveStdio } from './runtime.ts';
@@ -26,6 +27,9 @@ const REGISTRARS: Array<(server: McpServer) => void> = [
   registerContactsTools,
   registerCalendarTools,
   registerAccountsTools,
+  // Last, and normally a no-op: a deliberately MUTATING tool that the gate must drop. It is the
+  // only thing in this list that can tell a working gate from an absent one — see gate-canary.ts.
+  registerGateCanary,
 ];
 
 export function createMcpServer(): McpServer {

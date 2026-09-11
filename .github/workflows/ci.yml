@@ -74,3 +74,14 @@ jobs:
       # succeeded.
       - name: Tests (gjs + node)
         run: gjsify workspace postbote-cli test
+
+      # The read-only gate, asserted END-TO-END rather than against a stub. The unit suite tests
+      # `applyReadOnlyGate` through a fake recorder, which cannot see the failure that matters
+      # most here: the gate works by wrapping `McpServer.registerTool`, so if the SDK ever stops
+      # routing registrations through that method the wrapper becomes a no-op and every unit test
+      # still passes. This drives the real bundle over real stdio and asserts on the wire.
+      #
+      # It needs no session bus: GOA is unreachable in this container and the script tolerates
+      # that (it asserts a well-formed answer, not a successful one).
+      - name: MCP end-to-end + read-only gate (real stdio)
+        run: gjsify workspace postbote-cli test:mcp
