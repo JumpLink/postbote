@@ -1,5 +1,5 @@
 /**
- * A tool that MUST NOT be served — the read-only gate's discriminator.
+ * Tools that MUST NOT be served — the read-only gate's discriminator.
  *
  * The gate in runtime.ts is the one safety-critical piece of this server, and until this file
  * existed nothing could tell a working gate from an absent one. Every real tool declares
@@ -8,14 +8,15 @@
  * exact same catalogue and every assertion in the suite would stay green. That is a guard whose
  * failure is invisible, which is the same as no guard.
  *
- * So this registers a tool that declares itself MUTATING and must therefore be dropped. Absent
- * from `tools/list` = the gate closed. Present = the gate is open and everything else the suite
- * claims about read-only-ness is worthless.
+ * So this registers tools that must be dropped. Absent from `tools/list` = the gate closed.
+ * Present = the gate is open and everything else the suite claims about read-only-ness is
+ * worthless. Why there are two of them, and why the second is the one that matters, is on
+ * `GATE_CANARY_TOOLS` below.
  *
  * Off unless `POSTBOTE_MCP_GATE_CANARY=1`, so it costs the shipped server nothing, and the
- * handler is inert in any case: it performs no write, it only reports that it should never have
- * been reachable. Enabling it can therefore never grant a capability — the worst case is one
- * tool that returns an error string.
+ * handlers are inert in any case: they perform no write, they only report having been
+ * reachable. Enabling them can therefore never grant a capability — the worst case is two
+ * tools that return an error string.
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
