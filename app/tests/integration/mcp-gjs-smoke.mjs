@@ -133,9 +133,9 @@ console.log('OK: server exits cleanly on stdin EOF (no orphan)');
 // `registerTool` would serve exactly the same catalogue and section 1 would still pass. It
 // cannot distinguish a working gate from no gate at all.
 //
-// So ask the gate to do the thing it exists for. `POSTBOTE_MCP_GATE_CANARY=1` registers one
-// tool declaring `readOnlyHint: false`, through the same `server.registerTool` the real tools
-// use, after the gate has wrapped it.
+// So ask the gate to do the thing it exists for. `POSTBOTE_MCP_GATE_CANARY=1` registers two
+// tools that must be dropped, through the same `server.registerTool` the real tools use, after
+// the gate has wrapped it.
 //
 // TWO runs, and the second is the point. "Canary absent" alone is worthless evidence: it is
 // equally consistent with the gate dropping it and with the canary never being registered. The
