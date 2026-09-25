@@ -71,7 +71,7 @@ Built-in backends go through the same interface, so the plugin API is used from 
 | mail (IMAP; the existing code) | in the repo | the reference backend the port is proven against |
 | Telegram, Matrix, XMPP | in the repo | open or officially permitted third-party clients |
 | Signal | own package | native addon, per-platform prebuilds; the rest works without it |
-| WhatsApp | **own repository** | unofficial protocol, against WhatsApp's terms, real ban risk; a takedown hits only the plugin |
+| WhatsApp | own package **in this repo** | unofficial protocol, against WhatsApp's terms, real ban risk — kept self-contained (no other package imports it) so it can move to its own repository in one step if a takedown or ban wave makes that necessary |
 
 ### 6. Language per backend: the best implementation wins
 
@@ -91,7 +91,28 @@ GObject Introspection.
 Every candidate's license is compatible with postbote's AGPL-3.0-or-later (AGPL, MIT, ISC,
 MPL-2.0, LGPL-2.1).
 
-### 7. Order
+### 7. Web standards first — and gaps are fixed in gjsify
+
+gjsify's goal is to make web protocols and standards available on GJS. So a backend prefers the
+library path that runs on **standard web APIs** (WebSocket, WebCrypto, WebAssembly, fetch,
+streams) over a native addon, even where a native path exists. Every gap that path hits is fixed
+**in the gjsify core**, with a test, never shimmed in postbote — the next GJS app needs the same
+API. A native addon (napi-rs/Neon) is the fallback when no standards-based implementation exists,
+not the default.
+
+What the candidates need, verified in `refs/`:
+
+| Library | Needs from the platform |
+|---|---|
+| mtcute (`packages/web`) | WebSocket, WebCrypto, WebAssembly (its crypto), IndexedDB — or a storage adapter of ours |
+| Baileys | `ws`/WebSocket, WebAssembly (`whatsapp-rust-bridge` is Rust compiled to WASM, not a native addon), `libsignal` (JS), protobufjs |
+| xmpp.js | TCP + STARTTLS (`node:net`/`node:tls`) or WebSocket |
+| matrix-js-sdk | fetch, WebAssembly (`matrix-sdk-crypto-wasm`), IndexedDB or an in-memory/SQLite store |
+
+This moves the Matrix spike: `matrix-js-sdk` with the crypto WASM runs first; our own napi-rs
+crate over `matrix-rust-sdk` only if the WASM path cannot carry it.
+
+### 8. Order
 
 Port and store schema with both sync models, proven by mail → Telegram → Matrix → daemon +
 Signal → XMPP → WhatsApp. Matrix comes early: official, server-archive, and its E2EE path is the
