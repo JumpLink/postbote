@@ -30,6 +30,7 @@ SMTP, no flag write, no move, no delete.
 | `@postbote/imap` | Gio TLS transport, IMAP client, folders, search, fetch, attachments | `protocol`, `gnome`, `gi://` |
 | `@postbote/store` | SQLite index, sync engines (mailbox + chat), conversations (threading, classification), secret store, XDG paths, file writes | `protocol`, `node:*` |
 | `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
+| `@postbote/whatsapp` | WhatsApp `delivery` backend on Baileys (unofficial protocol: WebSocket, WASM, libsignal), its auth state on `SecretStore`, the QR / pairing-code link | `protocol`, `store`, `baileys`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
 **`store` must never import a backend** (`imap`, `telegram`, …). The sync engines are driven
@@ -38,6 +39,12 @@ through the driver ports declared in `protocol` (`MailBackend`, `ChatBackend`) a
 is the only reason the sync algorithms — the most intricate part of this project — can be
 unit-tested on Node against a fake backend and `:memory:`. If you find yourself wanting to
 import a backend from `store`, add a method to the port instead.
+
+**`@postbote/whatsapp` is imported by nothing but the app's registry** (`builtin.ts`) — no
+other package, no shared helper pulled out of it into `store` or `protocol`. WhatsApp is an
+unofficial protocol against WhatsApp's terms (ADR 0001 §5): if a takedown or ban wave makes it
+necessary, the package must move to its own repository in one step. Anything it needs from the
+rest goes through the ports; duplicate a ten-line helper rather than share it.
 
 **File naming carries meaning:** a file containing a `gi://` import is named `*.gjs.ts`.
 Everything else is pure and must stay runnable on Node. Packages that need both ship a
@@ -62,6 +69,7 @@ gjsify foreach -A check                        # type-check everything
 gjsify workspace postbote-cli build            # → app/dist/postbote.gjs.mjs
 gjsify workspace postbote-cli test             # @gjsify/unit, on gjs AND node
 gjsify run app/dist/postbote.gjs.mjs <command>
+gjsify workspace postbote-cli test:whatsapp-network  # real WhatsApp, no account: up to the QR code
 ```
 
 Tests run on **both** runtimes. That dual run is the entire point of the pure/`*.gjs.ts` split —
@@ -77,14 +85,21 @@ the MCP server via `run_in_background` when driving it.
   attachments. `.gitignore` is the second line of defence; not writing there is the first.
 - Test fixtures are **synthetic only**. Never commit a real message, address, or mailbox name.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
-- Chat sessions (Telegram's auth key, and the api_id/api_hash it was created with) are the one
-  secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
+- Chat sessions (Telegram's auth key and the api_id/api_hash it was created with; WhatsApp's
+  Signal keys and device credentials) are the one secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
   (created 0600 in 0700), through `SecretStore` — never in the index, never logged, never in a
   DTO or MCP output. Its backup tier is `secret`; the index stays `derived`.
+- **Delivery-only messages are `state`, not cache.** WhatsApp keeps no server archive: a
+  message is gone from its servers once a device acknowledged it, so what `receiveDeliveries`
+  writes is the only copy. With a `delivery-only` backend enabled the index is irreplaceable —
+  never "fix" a problem by deleting and rebuilding it, and never ask the session for the next
+  batch before the previous one is written. The WhatsApp auth state (Signal keys) is `secret`.
+  A linked device that does not connect for ~14 days is logged out by WhatsApp.
 - **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
   settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
 - Server-side deletions: the mailbox engine sees them every flag pass; the chat engine only on
-  `sync --full-scan` (Telegram reports deletions only as live updates). Keep that pass working —
+  `sync --full-scan` (Telegram reports deletions only as live updates); the delivery engine as
+  events (revoke, delete-for-me, clear/delete chat), applied in the batch they arrive in. Keep that pass working —
   a deleted message that stays MCP-readable is a privacy defect, not a staleness one.
 - Only `postbote sync` writes to the index. A search never does — one mental model, and no
   surprise disk growth from a read. User decisions (enabled backends, accepted terms,

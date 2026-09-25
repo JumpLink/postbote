@@ -16,12 +16,13 @@
     "lint": "gjsify lint .",
     "lint:fix": "gjsify lint --fix .",
     "build": "gjsify run build:gjs",
-    "build:gjs": "gjsify build src/index.ts --app gjs --outfile dist/postbote.gjs.mjs",
+    "build:gjs": "gjsify build src/index.ts --app gjs --external jimp,sharp --outfile dist/postbote.gjs.mjs",
     "start": "gjsify run dist/postbote.gjs.mjs",
     "dev": "gjsify run build:gjs && gjsify run start",
     "test": "gjsify test",
     "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs",
-    "test:telegram-network": "gjsify build tests/integration/telegram-handshake.ts --app gjs --outfile dist/telegram-handshake.gjs.mjs && gjsify run dist/telegram-handshake.gjs.mjs"
+    "test:telegram-network": "gjsify build tests/integration/telegram-handshake.ts --app gjs --outfile dist/telegram-handshake.gjs.mjs && gjsify run dist/telegram-handshake.gjs.mjs",
+    "test:whatsapp-network": "gjsify build tests/integration/whatsapp-qr.ts --app gjs --external jimp,sharp --outfile dist/whatsapp-qr.gjs.mjs && gjsify run dist/whatsapp-qr.gjs.mjs"
   },
   "gjsify": {
     "excludeGlobals": [
@@ -54,6 +55,7 @@
     "@postbote/protocol": "*",
     "@postbote/store": "*",
     "@postbote/telegram": "*",
+    "@postbote/whatsapp": "*",
     "dotenv": "^17.4.2",
     "yargs": "^18.1.0",
     "zod": "^4.4.3"
@@ -64,8 +66,10 @@
     "@gjsify/rolldown-native": "0.49.0",
     "@gjsify/runtime": "0.49.0",
     "@gjsify/unit": "0.49.0",
+    "@gjsify/ws": "0.49.0",
     "@types/node": "^26.1.2",
     "@types/yargs": "^17.0.35",
+    "baileys": "7.0.0-rc14",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
     "typescript": "^6.0.3"

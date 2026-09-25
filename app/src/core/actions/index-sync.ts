@@ -7,9 +7,10 @@
  */
 
 import { searchContacts } from '@postbote/gnome';
-import { type ContactDTO, isChatBackend, isMailBackend } from '@postbote/protocol';
+import { type ContactDTO, isChatBackend, isDeliveryBackend, isMailBackend } from '@postbote/protocol';
 import type {
   ChatSyncResult,
+  DeliverySyncResult,
   IndexSearchCriteria,
   IndexedMessage,
   RebuildResult,
@@ -24,6 +25,7 @@ import {
   openIndexDb,
   probeFts5,
   rebuildConversations,
+  receiveDeliveries,
   searchIndex,
   syncChats,
   syncIndex,
@@ -85,6 +87,11 @@ export interface IndexSyncResult extends SyncResult {
   backends: string[];
   /** One entry per chat backend: its accounts, the messages written, whether the budget ran out. */
   chats: Array<{ backend: string } & ChatSyncResult>;
+  /**
+   * One entry per delivery-only backend (WhatsApp): what it received this run. Those messages
+   * exist nowhere else — the network forgot them on delivery.
+   */
+  deliveries: Array<{ backend: string } & DeliverySyncResult>;
   conversations: RebuildResult & {
     /** Contacts the classifier knew about; null when the address book was unreachable. */
     contacts: number | null;
@@ -124,6 +131,7 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
   try {
     const results: SyncResult[] = [];
     const chats: IndexSyncResult['chats'] = [];
+    const deliveries: IndexSyncResult['deliveries'] = [];
     for (const plugin of plugins) {
       const name = plugin.manifest.name;
       const backend = registry.create(config, name, backendContext(name, config));
@@ -143,6 +151,13 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
           backend: name,
           ...(await syncChats(db, backend, { accountId: params.accountId, fullScan: params.fullScan })),
         });
+      } else if (isDeliveryBackend(backend)) {
+        if (params.folder) continue;
+        // `--full-scan` has nothing to re-take here: a delivery-only network keeps no history.
+        deliveries.push({
+          backend: name,
+          ...(await receiveDeliveries(db, backend, { accountId: params.accountId, mode: 'catch-up' })),
+        });
       } else {
         throw new Error(
           `backend ${name} uses the ${backend.kind} driver, which this postbote cannot sync yet`,
@@ -155,18 +170,29 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
     const conversations = rebuildConversations(db, { contacts: contacts ?? [] });
     const folders = results.flatMap((r) => r.folders);
     const chatAccounts = chats.flatMap((c) => c.accounts);
-    const errors = results.reduce((n, r) => n + r.errors, 0) + chats.reduce((n, c) => n + c.errors, 0);
-    const sources = folders.length + chatAccounts.length;
+    const deliveryAccounts = deliveries.flatMap((d) => d.accounts);
+    const errors =
+      results.reduce((n, r) => n + r.errors, 0) +
+      chats.reduce((n, c) => n + c.errors, 0) +
+      deliveries.reduce((n, d) => n + d.errors, 0);
+    const sources = folders.length + chatAccounts.length + deliveryAccounts.length;
     return {
       folders,
-      added: results.reduce((n, r) => n + r.added, 0) + chats.reduce((n, c) => n + c.added, 0),
+      added:
+        results.reduce((n, r) => n + r.added, 0) +
+        chats.reduce((n, c) => n + c.added, 0) +
+        deliveries.reduce((n, d) => n + d.added, 0),
       updated: results.reduce((n, r) => n + r.updated, 0),
-      removed: results.reduce((n, r) => n + r.removed, 0) + chats.reduce((n, c) => n + c.removed, 0),
+      removed:
+        results.reduce((n, r) => n + r.removed, 0) +
+        chats.reduce((n, c) => n + c.removed, 0) +
+        deliveries.reduce((n, d) => n + d.removed, 0),
       errors,
       // An error overall only when every folder AND every chat account failed.
       failed: sources > 0 && errors === sources,
       backends: plugins.map((p) => p.manifest.name),
       chats,
+      deliveries,
       conversations: { ...conversations, contacts: contacts?.length ?? null },
     };
   } finally {
