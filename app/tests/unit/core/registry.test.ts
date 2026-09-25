@@ -154,7 +154,9 @@ export default async () => {
 
     await it('parses a backend settings block and rejects a nested value', async () => {
       const config = parseConfig(
-        JSON.stringify({ backends: { telegram: { enabled: true, settings: { historyDepth: 50, label: 'x' } } } }),
+        JSON.stringify({
+          backends: { telegram: { enabled: true, settings: { historyDepth: 50, label: 'x' } } },
+        }),
       );
       expect(config.backends.telegram.settings?.historyDepth).toBe(50);
       expect(() =>
