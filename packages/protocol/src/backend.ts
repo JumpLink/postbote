@@ -1,7 +1,13 @@
 /**
- * The `MailBackend` port.
+ * The backend ports: `MessageBackend` (network-neutral) and `MailBackend` (the mailbox driver).
  *
- * This interface is the load-bearing seam of the project. `@postbote/store` drives the sync
+ * Every backend implements `MessageBackend` — a manifest plus its accounts — and is loaded
+ * through the app's registry. HOW its messages are synced is a driver on top, picked by `kind`:
+ * `mailbox` is the only one today (folders, UIDs, UIDVALIDITY — IMAP-shaped, and the reason it is
+ * not forced into a chat shape). A server-archive chat driver and a delivery-only driver join
+ * here with the first network that needs them.
+ *
+ * The `MailBackend` interface is the load-bearing seam of the project. `@postbote/store` drives the sync
  * engine THROUGH it and never imports `@postbote/imap`, which is the only reason the most
  * intricate code here — incremental sync, UIDVALIDITY handling, expunge detection — can be
  * unit-tested on Node against a fake backend and an in-memory database, with no server, no
@@ -11,6 +17,9 @@
  */
 
 import type { FolderInfo } from './list-parse.ts';
+import type { AutomationHeaders } from './mail-headers.ts';
+import type { BackendManifest } from './messenger.ts';
+import type { MailAddress } from './types.ts';
 
 /** Mailbox cursor state, as reported by SELECT/EXAMINE. */
 export interface BackendMailboxStatus {
@@ -39,6 +48,15 @@ export interface BackendMessage {
   attachments: Array<{ section: string; filename: string | null; mimeType: string; size: number }>;
   /** Plain-text body, already decoded and capped. Null when none could be extracted. */
   bodyText: string | null;
+  /** Structured From, To and Cc — the participants of the conversation this message joins. */
+  from: MailAddress[];
+  to: MailAddress[];
+  cc: MailAddress[];
+  /** Threading: the parent's Message-ID, and the whole References chain, oldest first. */
+  inReplyTo: string | null;
+  references: string[];
+  /** The headers that mark bulk or machine mail — the classifier's input. */
+  automation: AutomationHeaders;
 }
 
 /** Just the parts needed to detect a flag change or an expunge. */
@@ -71,7 +89,26 @@ export interface BackendAccount {
   provider: string;
 }
 
-export interface MailBackend {
+/**
+ * The network-neutral port every backend implements, built-in mail included.
+ *
+ * Small on purpose: what is common to every network is who it is (the manifest) and which
+ * accounts it has. Everything about fetching belongs to the sync driver, selected by `kind`.
+ */
+export interface MessageBackend {
+  readonly manifest: BackendManifest;
+  /** Which sync driver this backend implements. The engine switches on it, never on the name. */
+  readonly kind: string;
   listAccounts(): Promise<BackendAccount[]>;
+}
+
+/** The mailbox sync driver: folders, UIDs and flags, driven by `syncIndex` in `@postbote/store`. */
+export interface MailBackend extends MessageBackend {
+  readonly kind: 'mailbox';
   connect(accountId: string): Promise<BackendSession>;
+}
+
+/** Narrow a registry entry to the mailbox driver. */
+export function isMailBackend(backend: MessageBackend): backend is MailBackend {
+  return backend.kind === 'mailbox';
 }
