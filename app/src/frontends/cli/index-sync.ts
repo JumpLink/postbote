@@ -16,11 +16,18 @@ export const syncCommand: CommandModule = {
   describe: 'Build or update the local full-text index (the only command that writes to it)',
   builder: (yargs) =>
     yargs
-      .option('account', { type: 'string', describe: 'Restrict to a GOA account id; omit for all' })
-      .option('folder', { type: 'string', describe: 'Restrict to one mailbox; omit for all searchable' })
+      .option('account', {
+        type: 'string',
+        describe: 'Restrict to one account id (GOA, or e.g. telegram-…); omit for all',
+      })
+      .option('folder', {
+        type: 'string',
+        describe: 'Restrict to one mailbox (skips chat backends); omit for all',
+      })
       .option('full-scan', {
         type: 'boolean',
-        describe: 'Force the flag/expunge pass instead of waiting for it to fall due',
+        describe:
+          'Mail: force the flag/expunge pass. Chats: re-fetch the newest window, picking up edits and removing what was deleted',
       }),
   handler: (argv) => {
     const raw = argv as Record<string, unknown>;

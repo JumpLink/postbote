@@ -19,6 +19,12 @@ export interface BackendConfig {
   enabled: boolean;
   /** ISO-8601 time the user accepted the backend's terms notice. */
   termsAcceptedAt?: string;
+  /**
+   * The backend's own NON-SECRET settings, handed to it unvalidated: only the backend knows what
+   * they mean. Flat scalars only. Never a credential — this file is backed up as plain `state`;
+   * secrets go to the backend's SecretStore (Telegram refuses an api_hash here).
+   */
+  settings?: Record<string, string | number | boolean>;
 }
 
 export interface PostboteConfig {
@@ -58,9 +64,23 @@ export function parseConfig(text: string): PostboteConfig {
     if (typeof entry !== 'object' || entry === null || typeof entry.enabled !== 'boolean') {
       throw new Error(`config.backends.${name}.enabled must be true or false`);
     }
+    let settings: Record<string, string | number | boolean> | undefined;
+    if (entry.settings !== undefined) {
+      if (typeof entry.settings !== 'object' || entry.settings === null || Array.isArray(entry.settings)) {
+        throw new Error(`config.backends.${name}.settings must be an object`);
+      }
+      settings = {};
+      for (const [key, v] of Object.entries(entry.settings as Record<string, unknown>)) {
+        if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
+          throw new Error(`config.backends.${name}.settings.${key} must be a string, number or boolean`);
+        }
+        settings[key] = v;
+      }
+    }
     backends[name] = {
       enabled: entry.enabled,
       ...(typeof entry.termsAcceptedAt === 'string' ? { termsAcceptedAt: entry.termsAcceptedAt } : {}),
+      ...(settings ? { settings } : {}),
     };
   }
 

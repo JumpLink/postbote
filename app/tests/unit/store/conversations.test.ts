@@ -6,7 +6,7 @@ import {
   listConversations,
   migrate,
   openIndexDb,
-  rebuildMailConversations,
+  rebuildConversations,
   SCHEMA_VERSION,
   syncIndex,
 } from '@postbote/store';
@@ -82,12 +82,12 @@ function mailbox(): FakeBackend {
 async function built() {
   const db = freshDb();
   await syncIndex(db, mailbox(), { now: AT('2026-08-06T12:00:00Z') });
-  const result = rebuildMailConversations(db, { contacts: CONTACTS });
+  const result = rebuildConversations(db, { contacts: CONTACTS });
   return { db, result };
 }
 
 export default async () => {
-  await describe('rebuildMailConversations', async () => {
+  await describe('rebuildConversations', async () => {
     await it('threads the mailbox into conversations', async () => {
       const { db, result } = await built();
       try {
@@ -169,7 +169,7 @@ export default async () => {
         const before = listConversations(db)
           .map((c) => c.id)
           .sort();
-        rebuildMailConversations(db, { contacts: CONTACTS });
+        rebuildConversations(db, { contacts: CONTACTS });
         const after = listConversations(db)
           .map((c) => c.id)
           .sort();
@@ -182,7 +182,7 @@ export default async () => {
     await it('without an address book, a contact is just an address', async () => {
       const { db } = await built();
       try {
-        rebuildMailConversations(db, {});
+        rebuildConversations(db, {});
         const fest = listConversations(db).find((c) => c.title === 'Sommerfest');
         // Still conversational — the user replied — but no longer linked to a contact.
         expect(fest?.classification).toBe('conversational');
@@ -232,7 +232,7 @@ export default async () => {
             ]),
           );
         }
-        const result = rebuildMailConversations(db, {});
+        const result = rebuildConversations(db, {});
         const count = (sql: string) => Number((db.prepare(sql).get() as { n: number }).n);
         expect(result.conversations).toBe(121);
         expect(count('SELECT COUNT(*) AS n FROM conversations')).toBe(121);

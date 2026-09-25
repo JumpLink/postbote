@@ -6,7 +6,8 @@ layer and wins where they differ.
 
 ## The one rule that shapes this package
 
-**`store` must never import `imap`.** The sync engine is driven through the `MailBackend` port
+**`store` must never import a backend** (`imap`, `telegram`). The sync engines are driven
+through the `MailBackend` and `ChatBackend` ports
 declared in `@postbote/protocol` and injected by `app`. That keeps this package free of `gi://`
 even transitively, which is the only reason `sync.ts` — the most intricate code in the project —
 can be unit-tested on Node against a fake backend and `:memory:`. If you want to reach into
@@ -42,12 +43,30 @@ every `\Seen` change and rewrite the whole FTS row, body included.
 ## Conversations are derived
 
 `conversations`, `conversation_messages`, `participants` and their link tables are rewritten
-from `messages` by `rebuildMailConversations` after every sync, in one transaction. Threading
+from `messages` by `rebuildConversations` after every sync, in one transaction. Threading
 is a union over the whole mailbox and a message's class depends on its thread (did the user
 reply?), so a full rebuild is the simple correct form; ids are hashes of stable inputs, so they
 survive it. Per-sender overrides are NOT stored here — they come from the config and apply at
 read time, and `peopleOnlyClause` (SQL) must keep agreeing with `conversationVerdict` (JS);
 a test pins both directions.
+
+## Chats are written once, and linked on every rebuild
+
+`syncChats` (the `chat` driver's engine) writes chat messages into `conversation_messages`
+directly, incrementally, with a per-chat cursor in `chat_cursors`. They are NOT rewritten by the
+rebuild: a chat history is far larger than a mailbox's thread set and rewriting it every sync
+would spend the execution budget of (e) for nothing. What the rebuild does redo, set-based in a
+handful of statements, is the link into the participant directory (`chat_peer_links`, sender
+ids, memberships, `known-contact`), because the address book can change without a new message.
+A conversation is a chat because it has a cursor row — never because of its backend's name.
+
+Deletions: an incremental chat run only walks forward and cannot see a deleted message. A full
+scan re-takes each chat's newest window and removes the stored messages inside the range the
+window covers (`deletedBy`) plus every chat gone from the list — the chat counterpart of the
+expunge pass, and the only one. Do not narrow it.
+
+Chat bodies live on their `conversation_messages` row (`body`); mail bodies stay once in the
+FTS table.
 
 ## Where data lives — the actual privacy guarantee
 
@@ -56,7 +75,10 @@ bodies**, and this repo is public, so a stray index file would be a permanent le
 
 - `$XDG_DATA_HOME/postbote/index.db`, mode `0600`, re-applied on every open.
 - Attachments to `$XDG_DOWNLOAD_DIR`, else `$XDG_DATA_HOME/postbote/attachments`, dir mode `0700`.
-- Overridable only through `POSTBOTE_DATA_DIR` / `POSTBOTE_DB_PATH` / `POSTBOTE_ATTACHMENTS_DIR`.
+- Backend secrets (chat sessions) in `SecretStore` files under `$XDG_DATA_HOME/postbote/secrets/`,
+  0600 in 0700, TEXT only (bytes as base64 — BLOBs do not survive (c)), writes batched.
+- Overridable only through `POSTBOTE_DATA_DIR` / `POSTBOTE_DB_PATH` / `POSTBOTE_ATTACHMENTS_DIR` /
+  `POSTBOTE_SECRETS_DIR`.
 
 `.gitignore` is the second line of defence. Not writing there is the first, and it lives in
 `paths.ts` — whose tests take the environment as a parameter precisely so this is checkable.

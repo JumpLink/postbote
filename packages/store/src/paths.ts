@@ -35,6 +35,16 @@ export function indexDbPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(dataDir(env), 'index.db');
 }
 
+/**
+ * Where backends keep SECRET state — chat sessions, auth keys, crypto stores — one directory per
+ * backend (`secrets/<backend>/`, mode 0700). Apart from the index because it is not rebuildable
+ * and must never be served: the index is `derived` in a backup, this is `secret`.
+ */
+export function secretsDir(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.POSTBOTE_SECRETS_DIR?.trim();
+  return explicit || join(dataDir(env), 'secrets');
+}
+
 /** Where attachments are saved by default. */
 export function attachmentsDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.POSTBOTE_ATTACHMENTS_DIR?.trim();

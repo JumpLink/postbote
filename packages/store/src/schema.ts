@@ -21,7 +21,7 @@
 
 import { type IndexDatabase, withTransaction } from './db.ts';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * The FTS5 DDL. Defined once so the baseline and any future rebuild cannot drift.
@@ -103,7 +103,7 @@ const STATEMENTS: readonly string[] = [
      error TEXT)`,
 
   // ── conversations (v2) ─────────────────────────────────────────────
-  // Derived tables: `rebuildMailConversations` rewrites them from `messages` after each sync,
+  // Derived tables: `rebuildConversations` rewrites them from `messages` after each sync,
   // so they never hold anything the mail rows do not. A delivery-only backend will write its
   // own rows here directly, and at that point they become the only copy (ADR 0001 §2).
 
@@ -166,6 +166,53 @@ const STATEMENTS: readonly string[] = [
      remote_id TEXT)`,
 
   `CREATE INDEX IF NOT EXISTS conversation_messages_conv ON conversation_messages (conversation_id, sent_at)`,
+
+  // ── chats (v3) ────────────────────────────────────────────────────
+  // Written by `syncChats`, incrementally: unlike mail, chat messages are stored once in
+  // `conversation_messages` and never rewritten wholesale, because a chat history is too large
+  // to rebuild on every sync under gjsify's per-process execution budget (see `insertMany`).
+  // What IS rebuilt is the link to the participant directory, in `rebuildConversations`:
+  // `chat_peer_links` is derived, the other chat tables are not.
+
+  // One peer (person, bot, channel) as the network reports it; `addresses_json` holds the
+  // normalized addresses.
+  `CREATE TABLE IF NOT EXISTS chat_peers (
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     peer_id TEXT NOT NULL,
+     display_name TEXT,
+     addresses_json TEXT,
+     is_bot INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (backend, account_id, peer_id))`,
+
+  // Which directory participant a chat peer resolved to — the address book first, so a peer
+  // whose phone number is a contact's becomes that contact.
+  `CREATE TABLE IF NOT EXISTS chat_peer_links (
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     peer_id TEXT NOT NULL,
+     participant_id TEXT NOT NULL,
+     PRIMARY KEY (backend, account_id, peer_id))`,
+
+  `CREATE TABLE IF NOT EXISTS chat_members (
+     conversation_id TEXT NOT NULL,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     peer_id TEXT NOT NULL,
+     PRIMARY KEY (conversation_id, peer_id))`,
+
+  // The per-chat sync cursor. A row here is also what makes a conversation a CHAT to the
+  // rebuild — the store tells the two apart by driver data, never by backend name.
+  `CREATE TABLE IF NOT EXISTS chat_cursors (
+     conversation_id TEXT PRIMARY KEY,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     chat_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     last_seq INTEGER,
+     read_inbox_seq INTEGER,
+     read_outbox_seq INTEGER,
+     last_sync_at TEXT)`,
 ];
 
 /**
@@ -201,6 +248,18 @@ const UPGRADES: Record<number, readonly UpgradeStep[]> = {
     // the honest fix is to fetch them again: resetting the cursors makes the next sync re-index
     // every folder, and `upsertMessage` replaces each row in place.
     'UPDATE folders SET last_uid = 0, uid_next = NULL, message_count = NULL',
+  ],
+  // v3: chat messages live in conversation_messages itself (mail keeps its body in the FTS
+  // table and derives these rows; a chat has no other copy in the index).
+  3: [
+    { table: 'conversation_messages', column: 'body', type: 'TEXT' },
+    { table: 'conversation_messages', column: 'remote_seq', type: 'INTEGER' },
+    { table: 'conversation_messages', column: 'sender_peer_id', type: 'TEXT' },
+    { table: 'conversation_messages', column: 'edited_at', type: 'TEXT' },
+    { table: 'conversation_messages', column: 'reply_to_remote_id', type: 'TEXT' },
+    { table: 'conversation_messages', column: 'thread_remote_id', type: 'TEXT' },
+    { table: 'conversation_messages', column: 'peer_read', type: 'INTEGER' },
+    `CREATE INDEX IF NOT EXISTS conversation_messages_seq ON conversation_messages (conversation_id, remote_seq)`,
   ],
 };
 

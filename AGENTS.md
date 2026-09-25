@@ -25,17 +25,19 @@ SMTP, no flag write, no move, no delete.
 
 | Package | Contains | May import |
 |---|---|---|
-| `@postbote/protocol` | **Pure.** RFC grammar (IMAP lexer, ENVELOPE, FETCH, LIST, BODYSTRUCTURE, MIME, RFC 2047/2231, modified UTF-7), DTOs, errors, the plugin API: `MessageBackend` port + manifest, and the `MailBackend` mailbox driver | nothing |
+| `@postbote/protocol` | **Pure.** RFC grammar (IMAP lexer, ENVELOPE, FETCH, LIST, BODYSTRUCTURE, MIME, RFC 2047/2231, modified UTF-7), DTOs, errors, the plugin API: `MessageBackend` port + manifest, `BackendContext`, the `MailBackend` mailbox driver and the `ChatBackend` chat driver | nothing |
 | `@postbote/gnome` | GOA + EDS: accounts, contacts, calendar, IMAP credentials | `protocol`, `gi://` |
 | `@postbote/imap` | Gio TLS transport, IMAP client, folders, search, fetch, attachments | `protocol`, `gnome`, `gi://` |
-| `@postbote/store` | SQLite index, sync engine, conversations (threading, classification), XDG paths, file writes | `protocol`, `node:*` |
+| `@postbote/store` | SQLite index, sync engines (mailbox + chat), conversations (threading, classification), secret store, XDG paths, file writes | `protocol`, `node:*` |
+| `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
-**`store` must never import `imap`.** The sync engine is driven through the `MailBackend` port
-declared in `protocol` and injected by `app`. That keeps `store` free of `gi://` even
-transitively, which is the only reason the sync algorithm — the most intricate part of this
-project — can be unit-tested on Node against a fake backend and `:memory:`. If you find
-yourself wanting to import `imap` from `store`, add a method to the port instead.
+**`store` must never import a backend** (`imap`, `telegram`, …). The sync engines are driven
+through the driver ports declared in `protocol` (`MailBackend`, `ChatBackend`) and injected by
+`app`. That keeps `store` free of `gi://` and of any network library even transitively, which
+is the only reason the sync algorithms — the most intricate part of this project — can be
+unit-tested on Node against a fake backend and `:memory:`. If you find yourself wanting to
+import a backend from `store`, add a method to the port instead.
 
 **File naming carries meaning:** a file containing a `gi://` import is named `*.gjs.ts`.
 Everything else is pure and must stay runnable on Node. Packages that need both ship a
@@ -75,6 +77,15 @@ the MCP server via `run_in_background` when driving it.
   attachments. `.gitignore` is the second line of defence; not writing there is the first.
 - Test fixtures are **synthetic only**. Never commit a real message, address, or mailbox name.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
+- Chat sessions (Telegram's auth key, and the api_id/api_hash it was created with) are the one
+  secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
+  (created 0600 in 0700), through `SecretStore` — never in the index, never logged, never in a
+  DTO or MCP output. Its backup tier is `secret`; the index stays `derived`.
+- **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
+  settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
+- Server-side deletions: the mailbox engine sees them every flag pass; the chat engine only on
+  `sync --full-scan` (Telegram reports deletions only as live updates). Keep that pass working —
+  a deleted message that stays MCP-readable is a privacy defect, not a staleness one.
 - Only `postbote sync` writes to the index. A search never does — one mental model, and no
   surprise disk growth from a read. User decisions (enabled backends, accepted terms,
   per-sender classification) go to `$XDG_CONFIG_HOME/postbote/config.json`, never the index,

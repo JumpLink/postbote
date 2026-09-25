@@ -84,11 +84,13 @@ export interface MessageVerdict {
 /** Explicit per-sender decisions, keyed by normalized address. */
 export type SenderOverrides = Readonly<Record<string, Classification>>;
 
-const CONVERSATIONAL_RANK: ClassificationReason[] = ['override', 'replied', 'known-contact'];
+const CONVERSATIONAL_RANK: ClassificationReason[] = ['override', 'replied', 'known-contact', 'chat-member'];
 const AUTOMATED_RANK: ClassificationReason[] = [
   'override',
   'automated-header',
   'no-reply-sender',
+  'broadcast',
+  'bot',
   'unknown-sender',
 ];
 

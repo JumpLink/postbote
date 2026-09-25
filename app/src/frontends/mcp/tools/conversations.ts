@@ -23,7 +23,7 @@ export function registerConversationTools(server: McpServer): void {
     {
       title: 'List Conversations (offline)',
       description:
-        'List conversations from the local index, newest first: mail threads grouped by Message-ID/References, each with its participants (typed addresses, linked address-book contact), message and unread counts, and a classification — conversational (a person) or automated (lists, notifications, no-reply). Set people_only to hide automated ones. No message bodies. Built by `postbote sync`; check mail_sync_status when the list looks incomplete.',
+        'List conversations from the local index, newest first, across every enabled backend: mail threads grouped by Message-ID/References and chats (e.g. Telegram direct chats, groups, channels). Each has its backend, participants (typed addresses — email, phone, telegram, … — and the linked address-book contact), message and unread counts, and a classification — conversational (a person) or automated (lists, notifications, no-reply, broadcast channels, bots). Set people_only to hide automated ones. No message bodies. Built by `postbote sync`; check mail_sync_status when the list looks incomplete.',
       inputSchema: {
         people_only: z.boolean().optional().describe('Only conversations with a person in them'),
         account_id: z.string().optional().describe('Restrict to one account id'),
@@ -59,7 +59,7 @@ export function registerConversationTools(server: McpServer): void {
     {
       title: 'Get One Conversation (offline)',
       description:
-        'One conversation from the local index with its messages, oldest first: sender, date, subject, presentation (bubble or document), classification with its reason, and a ref (account, folder, uid) that mail_get_message accepts for the full message. Bodies are omitted unless include_bodies is true, and then capped per message.',
+        'One conversation from the local index with its messages, oldest first: sender, date, subject, presentation (bubble for chat, document for mail), classification with its reason, and a ref — for mail (account, folder, uid), which mail_get_message accepts for the full message; for chats the network message id (remoteId), plus edit time, reply and thread ids and, on your own messages, whether the other side has read them. Bodies are omitted unless include_bodies is true, and then capped per message.',
       inputSchema: {
         id: z.string().min(1).describe('Conversation id from conversations_list'),
         include_bodies: z.boolean().optional().describe('Include each message body (default false)'),

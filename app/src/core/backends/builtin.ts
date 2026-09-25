@@ -4,10 +4,12 @@
  */
 
 import { ImapBackend, MAIL_MANIFEST } from '@postbote/imap';
+import { TELEGRAM_MANIFEST, TelegramBackend } from '@postbote/telegram';
 import { BackendRegistry, type BackendPlugin } from './registry.ts';
 
 export const BUILTIN_PLUGINS: readonly BackendPlugin[] = [
   { manifest: MAIL_MANIFEST, create: () => new ImapBackend() },
+  { manifest: TELEGRAM_MANIFEST, create: (context) => new TelegramBackend(context) },
 ];
 
 export function builtinRegistry(): BackendRegistry {

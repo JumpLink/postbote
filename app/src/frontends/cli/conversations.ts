@@ -1,5 +1,5 @@
 /**
- * `postbote conversations` — the per-person view: mail threads (and later chats) grouped into
+ * `postbote conversations` — the per-person view: mail threads and chats grouped into
  * conversations, with `--people-only` hiding newsletters, notifications and other machine mail.
  *
  * Offline: reads what `postbote sync` built. `classify` corrects a sender in the config file.
@@ -20,7 +20,7 @@ const CLASSIFY_CHOICES = ['conversational', 'automated', 'auto'] as const;
 
 export const conversationsCommand: CommandModule = {
   command: 'conversations',
-  describe: 'Conversations across mail threads, from the local index (built by `postbote sync`)',
+  describe: 'Conversations across mail threads and chats, from the local index (built by `postbote sync`)',
   handler: () => {},
   builder: (yargs) =>
     yargs

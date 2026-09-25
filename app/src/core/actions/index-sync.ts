@@ -7,8 +7,9 @@
  */
 
 import { searchContacts } from '@postbote/gnome';
-import { type ContactDTO, isMailBackend } from '@postbote/protocol';
+import { type ContactDTO, isChatBackend, isMailBackend } from '@postbote/protocol';
 import type {
+  ChatSyncResult,
   IndexSearchCriteria,
   IndexedMessage,
   RebuildResult,
@@ -22,12 +23,14 @@ import {
   migrate,
   openIndexDb,
   probeFts5,
-  rebuildMailConversations,
+  rebuildConversations,
   searchIndex,
+  syncChats,
   syncIndex,
   syncStatus,
 } from '@postbote/store';
 import { builtinRegistry } from '../backends/builtin.ts';
+import { backendContext } from '../backends/context.ts';
 import { loadConfig } from '../config.ts';
 import { chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -80,6 +83,8 @@ export interface SyncParams {
 export interface IndexSyncResult extends SyncResult {
   /** The enabled backends this run synced, by name. */
   backends: string[];
+  /** One entry per chat backend: its accounts, the messages written, whether the budget ran out. */
+  chats: Array<{ backend: string } & ChatSyncResult>;
   conversations: RebuildResult & {
     /** Contacts the classifier knew about; null when the address book was unreachable. */
     contacts: number | null;
@@ -107,7 +112,9 @@ async function addressBook(): Promise<ContactDTO[] | null> {
  * The only operation that writes to the index.
  */
 export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResult> {
-  const plugins = builtinRegistry().enabled(loadConfig(params.configPath ?? configPath()));
+  const config = loadConfig(params.configPath ?? configPath());
+  const registry = builtinRegistry();
+  const plugins = registry.enabled(config);
   if (plugins.length === 0) {
     throw new Error(
       'no backend is enabled — `postbote backends list` shows them, `backends enable <name>` turns one on',
@@ -116,36 +123,50 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
   const db = openIndex(params.dbPath ?? indexDbPath());
   try {
     const results: SyncResult[] = [];
+    const chats: IndexSyncResult['chats'] = [];
     for (const plugin of plugins) {
-      const backend = plugin.create();
+      const name = plugin.manifest.name;
+      const backend = registry.create(config, name, backendContext(name, config));
       // The engine is chosen by the driver the backend implements, never by its name.
-      if (!isMailBackend(backend)) {
+      if (isMailBackend(backend)) {
+        results.push(
+          await syncIndex(db, backend, {
+            accountId: params.accountId,
+            folderPath: params.folder,
+            fullScan: params.fullScan,
+          }),
+        );
+      } else if (isChatBackend(backend)) {
+        // `--folder` names a mailbox; a chat backend has none, so a folder-scoped run skips it.
+        if (params.folder) continue;
+        chats.push({
+          backend: name,
+          ...(await syncChats(db, backend, { accountId: params.accountId, fullScan: params.fullScan })),
+        });
+      } else {
         throw new Error(
-          `backend ${plugin.manifest.name} uses the ${backend.kind} driver, which this postbote cannot sync yet`,
+          `backend ${name} uses the ${backend.kind} driver, which this postbote cannot sync yet`,
         );
       }
-      results.push(
-        await syncIndex(db, backend, {
-          accountId: params.accountId,
-          folderPath: params.folder,
-          fullScan: params.fullScan,
-        }),
-      );
     }
     const contacts = await addressBook();
     // Sync and rebuild write in multi-row batches: gjsify's sqlite has a per-process budget of
     // executions (gjsify gap, unfixed, gjsify#1838 — see `insertMany`).
-    const conversations = rebuildMailConversations(db, { contacts: contacts ?? [] });
+    const conversations = rebuildConversations(db, { contacts: contacts ?? [] });
     const folders = results.flatMap((r) => r.folders);
-    const errors = results.reduce((n, r) => n + r.errors, 0);
+    const chatAccounts = chats.flatMap((c) => c.accounts);
+    const errors = results.reduce((n, r) => n + r.errors, 0) + chats.reduce((n, c) => n + c.errors, 0);
+    const sources = folders.length + chatAccounts.length;
     return {
       folders,
-      added: results.reduce((n, r) => n + r.added, 0),
+      added: results.reduce((n, r) => n + r.added, 0) + chats.reduce((n, c) => n + c.added, 0),
       updated: results.reduce((n, r) => n + r.updated, 0),
-      removed: results.reduce((n, r) => n + r.removed, 0),
+      removed: results.reduce((n, r) => n + r.removed, 0) + chats.reduce((n, c) => n + c.removed, 0),
       errors,
-      failed: folders.length > 0 && errors === folders.length,
+      // An error overall only when every folder AND every chat account failed.
+      failed: sources > 0 && errors === sources,
       backends: plugins.map((p) => p.manifest.name),
+      chats,
       conversations: { ...conversations, contacts: contacts?.length ?? null },
     };
   } finally {
