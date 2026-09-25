@@ -77,6 +77,9 @@ export interface TelegramApi {
 
 /** What the interactive login asks the user for. Each is called only when Telegram needs it. */
 export interface LoginPrompts {
+  /** Your own app's api_id and api_hash — asked only when the environment does not set them. */
+  apiId(): Promise<string>;
+  apiHash(): Promise<string>;
   phone(): Promise<string>;
   code(): Promise<string>;
   /** Only asked for an account with two-step verification. */

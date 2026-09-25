@@ -166,7 +166,9 @@ export class FakeChatBackend implements ChatBackend {
         return {
           messages: slice,
           highestSeq: slice.at(-1)?.seq ?? null,
+          lowestSeq: slice[0]?.seq ?? null,
           exhausted: afterSeq === null || slice.length < limit,
+          reachedStart: afterSeq === null ? slice.length === all.length : false,
         };
       },
       close: async (): Promise<void> => {

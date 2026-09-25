@@ -26,7 +26,8 @@ export const syncCommand: CommandModule = {
       })
       .option('full-scan', {
         type: 'boolean',
-        describe: 'Mail: force the flag/expunge pass. Chats: re-fetch the newest window, picking up edits',
+        describe:
+          'Mail: force the flag/expunge pass. Chats: re-fetch the newest window, picking up edits and removing what was deleted',
       }),
   handler: (argv) => {
     const raw = argv as Record<string, unknown>;

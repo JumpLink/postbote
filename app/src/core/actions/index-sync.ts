@@ -161,7 +161,7 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
       folders,
       added: results.reduce((n, r) => n + r.added, 0) + chats.reduce((n, c) => n + c.added, 0),
       updated: results.reduce((n, r) => n + r.updated, 0),
-      removed: results.reduce((n, r) => n + r.removed, 0),
+      removed: results.reduce((n, r) => n + r.removed, 0) + chats.reduce((n, c) => n + c.removed, 0),
       errors,
       // An error overall only when every folder AND every chat account failed.
       failed: sources > 0 && errors === sources,

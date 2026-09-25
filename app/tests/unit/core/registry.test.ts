@@ -154,14 +154,14 @@ export default async () => {
 
     await it('parses a backend settings block and rejects a nested value', async () => {
       const config = parseConfig(
-        JSON.stringify({ backends: { telegram: { enabled: true, settings: { apiId: 1, apiHash: 'x' } } } }),
+        JSON.stringify({ backends: { telegram: { enabled: true, settings: { historyDepth: 50, label: 'x' } } } }),
       );
-      expect(config.backends.telegram.settings?.apiId).toBe(1);
+      expect(config.backends.telegram.settings?.historyDepth).toBe(50);
       expect(() =>
         parseConfig(
-          JSON.stringify({ backends: { telegram: { enabled: true, settings: { apiId: { a: 1 } } } } }),
+          JSON.stringify({ backends: { telegram: { enabled: true, settings: { label: { a: 1 } } } } }),
         ),
-      ).toThrow(/settings\.apiId/);
+      ).toThrow(/settings\.label/);
     });
 
     await it('classify writes the override to the config, and `auto` removes it', async () => {

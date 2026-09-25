@@ -3,6 +3,7 @@ import { describe, expect, it } from '@gjsify/unit';
 import type { ContactDTO } from '@postbote/protocol';
 import {
   chatConversationId,
+  deletedBy,
   getConversation,
   listConversations,
   rebuildConversations,
@@ -401,6 +402,72 @@ export default async () => {
       } finally {
         db.close();
       }
+    });
+
+    await it('a message deleted on the server survives an incremental run, not a full scan', async () => {
+      const backend = new FakeChatBackend();
+      backend.addChat({ remoteId: '1002', kind: 'direct', title: 'Ben', members: [BEN] });
+      for (let seq = 1; seq <= 10; seq++) backend.post('1002', chatMessage('1002', seq, BEN, `m${seq}`));
+      const db = freshDb();
+      const id = chatConversationId('telegram', ACCOUNT, '1002');
+      const seqs = () => (getConversation(db, id)?.messages ?? []).map((m) => m.ref.remoteId).join(' ');
+      try {
+        await syncChats(db, backend, { historyDepth: 10 });
+        const chat = backend.chats.get('1002');
+        if (!chat) throw new Error('fixture chat missing');
+        // Deleted on the phone: #3 inside the chat, #10 its newest message.
+        chat.messages = chat.messages.filter((m) => m.seq !== 3 && m.seq !== 10);
+        await syncChats(db, backend);
+        expect(getConversation(db, id)?.messages.length).toBe(10);
+        // The full scan's window of 4 covers #6–#9 and everything above: #10 goes, #3 is
+        // outside the window and so not proven deleted — it stays until a window covers it.
+        const scan = await syncChats(db, backend, { historyDepth: 4, fullScan: true });
+        expect(scan.removed).toBe(1);
+        expect(seqs()).toBe('1002/1 1002/2 1002/3 1002/4 1002/5 1002/6 1002/7 1002/8 1002/9');
+        const deep = await syncChats(db, backend, { historyDepth: 50, fullScan: true });
+        expect(deep.removed).toBe(1);
+        expect(seqs().includes('1002/3')).toBe(false);
+        expect(listConversations(db).find((c) => c.id === id)?.messageCount).toBe(8);
+      } finally {
+        db.close();
+      }
+    });
+
+    await it('a full scan removes a chat that left the list, with its messages', async () => {
+      const backend = telegramFixture();
+      const db = freshDb();
+      try {
+        await syncChats(db, backend);
+        backend.chats.delete('-4001');
+        await syncChats(db, backend);
+        expect(listConversations(db).some((c) => c.id === GROUP)).toBe(true);
+        const scan = await syncChats(db, backend, { fullScan: true });
+        expect(scan.removed).toBe(1);
+        expect(listConversations(db).some((c) => c.id === GROUP)).toBe(false);
+        expect(
+          count(db, 'SELECT COUNT(*) AS n FROM conversation_messages WHERE conversation_id = ?', GROUP),
+        ).toBe(0);
+        expect(count(db, 'SELECT COUNT(*) AS n FROM chat_cursors WHERE conversation_id = ?', GROUP)).toBe(0);
+      } finally {
+        db.close();
+      }
+    });
+
+    await it('deletedBy proves deletions only inside the range a page covered', async () => {
+      const stored = [1, 2, 3, 4, 5].map((seq) => ({ id: `m${seq}`, seq }));
+      const msg = (seq: number) => chatMessage('1', seq, BEN, 'x');
+      const base = { exhausted: true, reachedStart: false };
+      // Window #3–#5 (newest): #4 missing, #1/#2 are outside it.
+      expect(
+        deletedBy({ ...base, messages: [msg(3), msg(5)], lowestSeq: 3, highestSeq: 5 }, stored),
+      ).toEqualArray(['m4']);
+      // An empty page that did not reach the start proves nothing.
+      expect(deletedBy({ ...base, messages: [], lowestSeq: null, highestSeq: null }, stored).length).toBe(0);
+      // An empty page that reached the start: the chat is empty.
+      expect(
+        deletedBy({ ...base, reachedStart: true, messages: [], lowestSeq: null, highestSeq: null }, stored)
+          .length,
+      ).toBe(5);
     });
 
     await it('an edited message re-fetched by a full scan replaces its row', async () => {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from '@gjsify/unit';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,7 +27,10 @@ import {
   API_ID_ENV,
   identityOf,
   peerAddresses,
-  resolveCredentials,
+  credentialsFromEnv,
+  parseCredentials,
+  PENDING_STALE_MS,
+  refuseConfigCredentials,
   SecretStoreStorage,
   TELEGRAM_MANIFEST,
   TelegramBackend,
@@ -38,6 +50,7 @@ import { fakeFactory, group, ME, tgMessage, user } from './fake-client.ts';
  */
 
 const HASH = '0123456789abcdef0123456789abcdef';
+const CREDENTIAL_ENV = { [API_ID_ENV]: '12345', [API_HASH_ENV]: HASH };
 const ANNA = user(1001, 'Anna Example', { username: 'Anna_Example', phoneNumber: '491510000000' });
 const BEN = user(1002, 'Ben Example');
 const BOT = user(1003, 'Helper Bot', { username: 'helper_bot', isBot: true });
@@ -48,12 +61,9 @@ function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'postbote-telegram-'));
 }
 
-function context(dir: string, env: Record<string, string | undefined> = {}): BackendContext {
-  return {
-    settings: { apiId: 12345, apiHash: HASH },
-    env,
-    secretsDir: join(dir, 'secrets', 'telegram'),
-  };
+/** Credentials from the environment by default; `env: {}` makes the login ask for them. */
+function context(dir: string, env: Record<string, string | undefined> = CREDENTIAL_ENV): BackendContext {
+  return { settings: {}, env, secretsDir: join(dir, 'secrets', 'telegram') };
 }
 
 function prompter(answers: string[]): AccountPrompter & { asked: string[]; notes: string[] } {
@@ -87,30 +97,29 @@ export default async () => {
   });
 
   await describe('Telegram credentials', async () => {
-    await it('reads the config settings, and the environment wins', async () => {
-      const fromConfig = resolveCredentials({
-        settings: { apiId: '777', apiHash: HASH.toUpperCase() },
-        env: {},
-      });
-      expect(fromConfig.apiId).toBe(777);
-      expect(fromConfig.apiHash).toBe(HASH);
-      const fromEnv = resolveCredentials({
-        settings: { apiId: 777, apiHash: HASH },
-        env: { [API_ID_ENV]: '888', [API_HASH_ENV]: 'ffffffffffffffffffffffffffffffff' },
-      });
-      expect(fromEnv.apiId).toBe(888);
-    });
-
-    await it('refuses without them, and never echoes a bad hash', async () => {
-      expect(() => resolveCredentials({ settings: {}, env: {} })).toThrow(/my\.telegram\.org/);
+    await it('validates a pair, never quoting a bad hash', async () => {
+      expect(parseCredentials('777', HASH.toUpperCase()).apiHash).toBe(HASH);
+      expect(() => parseCredentials('x', HASH)).toThrow(/api_id/);
       let message = '';
       try {
-        resolveCredentials({ settings: { apiId: 1, apiHash: 'not-a-hash-secret-value' }, env: {} });
+        parseCredentials(1, 'not-a-hash-secret-value');
       } catch (err) {
         message = err instanceof Error ? err.message : String(err);
       }
       expect(message).toMatch(/32 hexadecimal/);
       expect(message.includes('not-a-hash-secret-value')).toBe(false);
+    });
+
+    await it('takes the environment as a whole pair or not at all', async () => {
+      expect(credentialsFromEnv({})).toBe(null);
+      expect(credentialsFromEnv(CREDENTIAL_ENV)?.apiId).toBe(12345);
+      expect(() => credentialsFromEnv({ [API_ID_ENV]: '1' })).toThrow(/both/);
+    });
+
+    await it('refuses credentials in the config file — it is backed up in the clear', async () => {
+      expect(() => refuseConfigCredentials({ apiHash: HASH })).toThrow(/do not belong in the config/);
+      expect(() => refuseConfigCredentials({ apiId: 1 })).toThrow(/do not belong in the config/);
+      refuseConfigCredentials({ somethingElse: true });
     });
   });
 
@@ -365,14 +374,63 @@ export default async () => {
       }
     });
 
-    await it('refuses to log in without api credentials, before asking anything', async () => {
+    await it('refuses a config holding the api_hash, before asking anything', async () => {
       const dir = tempDir();
       try {
-        const backend = new TelegramBackend({ ...context(dir), settings: {} }, fakeFactory({}).create);
+        const backend = new TelegramBackend(
+          { ...context(dir), settings: { apiHash: HASH } },
+          fakeFactory({}).create,
+        );
         const ask = prompter([]);
-        await expect(backend.addAccount(ask)).rejects.toThrow(/api_id/);
+        await expect(backend.addAccount(ask)).rejects.toThrow(/do not belong in the config/);
         expect(ask.asked.length).toBe(0);
         expect(existsSync(context(dir).secretsDir)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('without the environment, asks for api_id/api_hash first and keeps them in the session', async () => {
+      const dir = tempDir();
+      try {
+        const noEnv = context(dir, {});
+        const factory = fakeFactory({ dialogs: [] });
+        const ask = prompter(['12345', HASH, '+49 170 0000000', '12345', 'correct horse']);
+        await new TelegramBackend(noEnv, factory.create).addAccount(ask);
+        expect(ask.asked[0]).toMatch(/api_id/);
+        expect(ask.asked[1]).toMatch(/api_hash.*\(secret\)$/);
+        expect(factory.clients[0].credentials.apiId).toBe(12345);
+        // Stored in the 0600 session file, not the config; `sync` needs no environment.
+        const store = SecretStore.open(join(noEnv.secretsDir, 'telegram-42.db'));
+        expect(store.get('postbote.api', 'apiHash')).toBe(HASH);
+        store.close();
+        const session = await new TelegramBackend(noEnv, factory.create).connect('telegram-42');
+        expect(factory.clients[1].credentials.apiHash).toBe(HASH);
+        await session.close();
+        // The environment still wins over what is stored.
+        const other = { [API_ID_ENV]: '999', [API_HASH_ENV]: 'ffffffffffffffffffffffffffffffff' };
+        await (await new TelegramBackend(context(dir, other), factory.create).connect('telegram-42')).close();
+        expect(factory.clients[2].credentials.apiId).toBe(999);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('sweeps a stale pending login (it may hold a live key), keeps a fresh one, lists neither', async () => {
+      const dir = tempDir();
+      try {
+        const secrets = context(dir).secretsDir;
+        mkdirSync(secrets, { recursive: true });
+        const stale = join(secrets, 'login-1000-1.pending.db');
+        const fresh = join(secrets, 'login-2000-2.pending.db');
+        writeFileSync(stale, '');
+        writeFileSync(fresh, '');
+        const old = (Date.now() - PENDING_STALE_MS - 60_000) / 1000;
+        utimesSync(stale, old, old);
+        const backend = new TelegramBackend(context(dir), fakeFactory({}).create);
+        expect((await backend.listAccounts()).length).toBe(0);
+        expect(existsSync(stale)).toBe(false);
+        expect(existsSync(fresh)).toBe(true);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

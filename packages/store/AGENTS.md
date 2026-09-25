@@ -60,6 +60,11 @@ handful of statements, is the link into the participant directory (`chat_peer_li
 ids, memberships, `known-contact`), because the address book can change without a new message.
 A conversation is a chat because it has a cursor row — never because of its backend's name.
 
+Deletions: an incremental chat run only walks forward and cannot see a deleted message. A full
+scan re-takes each chat's newest window and removes the stored messages inside the range the
+window covers (`deletedBy`) plus every chat gone from the list — the chat counterpart of the
+expunge pass, and the only one. Do not narrow it.
+
 Chat bodies live on their `conversation_messages` row (`body`); mail bodies stay once in the
 FTS table.
 

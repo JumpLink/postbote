@@ -9,14 +9,20 @@ import type { ChatHistoryPage, ChatInfo, ChatSession } from '@postbote/protocol'
 import type { TelegramApi, TgMessage } from './api.ts';
 import { toChatInfo, toChatMessage } from './map.ts';
 
-function page(raw: ReadonlyArray<TgMessage>, afterSeq: number | null, exhausted: boolean): ChatHistoryPage {
+function page(
+  raw: ReadonlyArray<TgMessage>,
+  afterSeq: number | null,
+  exhausted: boolean,
+  reachedStart: boolean,
+): ChatHistoryPage {
   const fresh = afterSeq === null ? raw : raw.filter((m) => m.id > afterSeq);
   const ordered = [...fresh].sort((a, b) => a.id - b.id);
-  const highest = ordered.length > 0 ? ordered[ordered.length - 1].id : null;
   return {
     messages: ordered.map(toChatMessage).filter((m) => m !== null),
-    highestSeq: highest,
+    highestSeq: ordered.length > 0 ? ordered[ordered.length - 1].id : null,
+    lowestSeq: ordered.length > 0 ? ordered[0].id : null,
     exhausted,
+    reachedStart,
   };
 }
 
@@ -39,8 +45,10 @@ export class TelegramChatSession implements ChatSession {
     const chatId = Number(chatRemoteId);
     if (!Number.isSafeInteger(chatId)) throw new Error(`not a Telegram chat id: ${chatRemoteId}`);
     if (afterSeq === null) {
-      // The newest `limit` messages. Nothing is newer than the newest, so the chat is caught up.
-      return page(await this.api.getHistory(chatId, { limit }), null, true);
+      // The newest `limit` messages. Nothing is newer than the newest, so the chat is caught up;
+      // a short page means nothing older exists either.
+      const raw = await this.api.getHistory(chatId, { limit });
+      return page(raw, null, true, raw.length < limit);
     }
     // Oldest first, starting AT the offset id — hence the +1, so `afterSeq` itself is excluded.
     const raw = await this.api.getHistory(chatId, {
@@ -48,7 +56,7 @@ export class TelegramChatSession implements ChatSession {
       offset: { id: afterSeq + 1, date: 0 },
       reverse: true,
     });
-    return page(raw, afterSeq, raw.length < limit);
+    return page(raw, afterSeq, raw.length < limit, false);
   }
 
   async close(): Promise<void> {

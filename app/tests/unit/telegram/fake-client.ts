@@ -80,12 +80,14 @@ export interface FakeScript {
 
 export class FakeClient implements TelegramClientHandle {
   readonly storage: ClientOptions['storage'];
+  readonly credentials: ClientOptions['credentials'];
   readonly script: FakeScript;
   readonly calls: string[] = [];
   destroyed = 0;
 
   constructor(options: ClientOptions, script: FakeScript) {
     this.storage = options.storage;
+    this.credentials = options.credentials;
     this.script = script;
   }
 

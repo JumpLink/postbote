@@ -16,7 +16,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, existsSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { insertMany, placeholders, withTransaction } from './db.ts';
 import { ensurePrivateDir } from './download.ts';
@@ -50,11 +50,23 @@ export class SecretStore {
       if (!path.endsWith('.db'))
         throw new Error(`secret store path must end in .db (libgda appends it): ${path}`);
       ensurePrivateDir(dirname(path));
+      // Create the file 0600 BEFORE SQLite opens it: SQLite would create it with the umask's
+      // mode, and a chmod afterwards leaves a window in which a session key is world-readable.
+      // 'wx' is atomic and never truncates an existing session; SQLite takes an empty file as
+      // an empty database. (Its `-journal` companion is covered by the 0700 directory.)
+      if (!existsSync(path)) {
+        try {
+          closeSync(openSync(path, 'wx', 0o600));
+        } catch (err) {
+          if ((err as { code?: string }).code !== 'EEXIST') throw err;
+        }
+      }
     }
     const db = new DatabaseSync(path);
     db.exec(
       'CREATE TABLE IF NOT EXISTS secrets (namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (namespace, key))',
     );
+    // Again on every open: a mode that drifted once (a restore, a copy) must not stay wrong.
     if (path !== ':memory:' && existsSync(path)) chmodSync(path, 0o600);
     return new SecretStore(db, path);
   }

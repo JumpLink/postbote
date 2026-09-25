@@ -207,8 +207,16 @@ export interface ChatHistoryPage {
    * when the page was empty.
    */
   highestSeq: number | null;
+  /** The lowest sequence the page covered, service notices included. Null when empty. */
+  lowestSeq: number | null;
   /** True when nothing newer exists: the chat is caught up. */
   exhausted: boolean;
+  /**
+   * True when nothing OLDER exists either: the page reaches back to the chat's first message.
+   * Together with `lowestSeq`/`highestSeq` this says which range the page covers completely —
+   * the range in which a stored message the page does not contain was deleted on the server.
+   */
+  reachedStart: boolean;
 }
 
 /** One connected chat account. Closed by the engine when it is done. */

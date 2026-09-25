@@ -77,10 +77,15 @@ the MCP server via `run_in_background` when driving it.
   attachments. `.gitignore` is the second line of defence; not writing there is the first.
 - Test fixtures are **synthetic only**. Never commit a real message, address, or mailbox name.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
-- Chat sessions (Telegram's auth key) are the one secret postbote stores: one file per account
-  under `$XDG_DATA_HOME/postbote/secrets/<backend>/` (0600 in 0700), through `SecretStore` —
-  never in the index, never logged, never in a DTO or MCP output. Its backup tier is `secret`;
-  the index stays `derived`.
+- Chat sessions (Telegram's auth key, and the api_id/api_hash it was created with) are the one
+  secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
+  (created 0600 in 0700), through `SecretStore` — never in the index, never logged, never in a
+  DTO or MCP output. Its backup tier is `secret`; the index stays `derived`.
+- **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
+  settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
+- Server-side deletions: the mailbox engine sees them every flag pass; the chat engine only on
+  `sync --full-scan` (Telegram reports deletions only as live updates). Keep that pass working —
+  a deleted message that stays MCP-readable is a privacy defect, not a staleness one.
 - Only `postbote sync` writes to the index. A search never does — one mental model, and no
   surprise disk growth from a read. User decisions (enabled backends, accepted terms,
   per-sender classification) go to `$XDG_CONFIG_HOME/postbote/config.json`, never the index,

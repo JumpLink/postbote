@@ -111,33 +111,42 @@ user. Postbote ships none, so the first step is yours:
 
 1. Create an app for yourself at <https://my.telegram.org> → *API development
    tools*. You get an `api_id` (a number) and an `api_hash` (32 hex characters).
-2. Give them to postbote — either in the environment
-   (`POSTBOTE_TELEGRAM_API_ID`, `POSTBOTE_TELEGRAM_API_HASH`, which win) or in
-   the config file:
-
-   ```json
-   { "backends": { "telegram": { "enabled": true, "settings": { "apiId": 1234567, "apiHash": "…" } } } }
-   ```
-3. Enable the backend (this shows Telegram's terms once) and log in:
+2. Enable the backend (this shows Telegram's terms once) and log in. The login
+   asks for the `api_id` and `api_hash` first (the hash without echo), then the
+   phone number, the login code and the 2FA password if one is set:
 
    ```bash
    postbote backends enable telegram --accept-terms
-   postbote accounts add telegram     # phone number → login code → 2FA password if set
+   postbote accounts add telegram
    postbote accounts list --backend telegram
    postbote sync                      # mail and Telegram into one index
    postbote conversations list --people-only
    ```
+
+   The `api_id`/`api_hash` are kept in the account's session file, not in the
+   config (which is plain text in every backup; a config that carries them is
+   refused). To keep them in a password manager instead, set
+   `POSTBOTE_TELEGRAM_API_ID` and `POSTBOTE_TELEGRAM_API_HASH`; the environment
+   wins over the stored pair and the login does not ask.
 
 The first sync takes the newest 200 messages of every chat; later syncs walk
 forward from there, at most 5 000 messages per run (the rest follows on the
 next). A contact whose phone number is in your address book becomes the same
 person as their mail address. Channels and bots are classified *automated*.
 
+A message deleted on Telegram stays in the index until a full scan:
+`postbote sync --full-scan` re-reads each chat's newest window and removes every
+stored message in it that Telegram no longer has, and every chat that left your
+list. (Telegram reports deletions only as live updates, which a sync without a
+daemon does not receive.)
+
 The login leaves a **session file** at
 `$XDG_DATA_HOME/postbote/secrets/telegram/telegram-<user id>.db` (mode `0600`
 in a `0700` directory; override the base with `POSTBOTE_SECRETS_DIR`). Whoever
-holds it can read your Telegram account: back it up like a password, never share
-it. Telegram lists it under *Settings → Devices* as `postbote`, where you can
+holds it can read your Telegram account (it also holds your `api_id`/`api_hash`):
+back it up like a password, never share it. A login killed halfway leaves a
+`login-*.pending.db` there; the next `accounts add` or account listing removes it
+once it is 15 minutes old. Telegram lists it under *Settings → Devices* as `postbote`, where you can
 end it; deleting the file ends it on this machine.
 
 ## As an MCP server

@@ -20,8 +20,9 @@ export interface BackendConfig {
   /** ISO-8601 time the user accepted the backend's terms notice. */
   termsAcceptedAt?: string;
   /**
-   * The backend's own settings (e.g. Telegram's api_id/api_hash), handed to it unvalidated:
-   * only the backend knows what they mean. Flat scalars only.
+   * The backend's own NON-SECRET settings, handed to it unvalidated: only the backend knows what
+   * they mean. Flat scalars only. Never a credential — this file is backed up as plain `state`;
+   * secrets go to the backend's SecretStore (Telegram refuses an api_hash here).
    */
   settings?: Record<string, string | number | boolean>;
 }

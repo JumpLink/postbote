@@ -9,6 +9,13 @@
  * messages; every later sync walks FORWARD from the stored cursor, page by page, so nothing
  * between two syncs is skipped. Older history than the first window is not fetched.
  *
+ * Deletions: an incremental run only walks forward, so it cannot see a message deleted on the
+ * server — Telegram reports those only as live updates (per channel, through
+ * `getChannelDifference`), which a sync without a daemon does not receive. A FULL SCAN
+ * (`sync --full-scan`) re-takes each chat's newest window and removes every stored message in
+ * the range that window covers but no longer contains, and every chat that left the list —
+ * the chat counterpart of the mailbox engine's expunge pass.
+ *
  * Budget: every message costs a share of a multi-row INSERT, and executions are a per-process
  * resource on gjsify's libgda-backed sqlite (gjsify gap, unfixed, gjsify#1838 — see
  * `insertMany`). `maxMessages` caps one run; a chat that did not fit keeps its cursor and
@@ -21,6 +28,7 @@
 
 import type {
   ChatBackend,
+  ChatHistoryPage,
   ChatInfo,
   ChatMessage,
   ChatPeer,
@@ -29,7 +37,7 @@ import type {
   ClassificationReason,
 } from '@postbote/protocol';
 import type { IndexDatabase } from './db.ts';
-import { insertMany, type SqlValue, withTransaction } from './db.ts';
+import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
 import { upsertAccount } from './index-store.ts';
 import { stableId } from './threads.ts';
 
@@ -57,6 +65,8 @@ export interface ChatAccountSyncResult {
   chatsFetched: number;
   /** Messages written. */
   added: number;
+  /** Messages and chats found deleted on the server by a full scan, and removed here. */
+  removed: number;
   /** Chats whose fetch failed; their cursor stays where it was. */
   chatErrors: number;
   /** An error that stopped the whole account (connect, listing the chats). */
@@ -66,6 +76,7 @@ export interface ChatAccountSyncResult {
 export interface ChatSyncResult {
   accounts: ChatAccountSyncResult[];
   added: number;
+  removed: number;
   errors: number;
   /** True when EVERY account failed — the only case that is an error overall. */
   failed: boolean;
@@ -131,6 +142,10 @@ class ChatBatch {
   readonly members = new Map<string, SqlValue[]>();
   readonly cursors: SqlValue[][] = [];
   readonly conversations: SqlValue[][] = [];
+  /** Message rows whose message is gone from the server. */
+  readonly deletedMessages: string[] = [];
+  /** Chat conversations whose chat is gone from the account. */
+  readonly deletedConversations: string[] = [];
 
   readonly backend: string;
   readonly accountId: string;
@@ -168,8 +183,69 @@ function chatSummary(chat: ChatInfo): { classification: Classification; reason: 
     : { classification: 'conversational', reason: 'chat-member' };
 }
 
+const DELETE_CHUNK = 100;
+
+function deleteIn(db: IndexDatabase, sql: (placeholders: string) => string, ids: readonly string[]): void {
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK) {
+    const chunk = ids.slice(i, i + DELETE_CHUNK);
+    db.prepare(sql(placeholders(chunk.length))).run(...chunk);
+  }
+}
+
+/**
+ * The stored messages of one account, by conversation — only loaded for a full scan, which is
+ * the one run that can tell a deleted message from one that was never fetched.
+ */
+function loadStoredSeqs(
+  db: IndexDatabase,
+  backend: string,
+  accountId: string,
+): Map<string, Array<{ id: string; seq: number }>> {
+  const rows = db
+    .prepare(
+      'SELECT id, conversation_id, remote_seq FROM conversation_messages WHERE backend = ? AND account_id = ? AND remote_seq IS NOT NULL',
+    )
+    .all(backend, accountId) as Array<Record<string, unknown>>;
+  const result = new Map<string, Array<{ id: string; seq: number }>>();
+  for (const r of rows) {
+    const list = result.get(String(r.conversation_id)) ?? [];
+    list.push({ id: String(r.id), seq: Number(r.remote_seq) });
+    result.set(String(r.conversation_id), list);
+  }
+  return result;
+}
+
+/**
+ * The stored messages a complete page proves deleted: inside the range the page covered —
+ * from its lowest sequence (or the chat's start, when it reached it) up to its highest (or
+ * everything, since the window is the newest and nothing newer exists) — but not in it.
+ */
+export function deletedBy(
+  page: Pick<ChatHistoryPage, 'messages' | 'lowestSeq' | 'highestSeq' | 'exhausted' | 'reachedStart'>,
+  stored: ReadonlyArray<{ id: string; seq: number }>,
+): string[] {
+  // An empty page that did not reach the start proves nothing.
+  if (page.lowestSeq === null && !page.reachedStart) return [];
+  const low = page.reachedStart ? Number.NEGATIVE_INFINITY : (page.lowestSeq ?? Number.NEGATIVE_INFINITY);
+  const high = page.exhausted ? Number.POSITIVE_INFINITY : (page.highestSeq ?? Number.NEGATIVE_INFINITY);
+  const live = new Set(page.messages.map((m) => m.seq));
+  return stored.filter((m) => m.seq >= low && m.seq <= high && !live.has(m.seq)).map((m) => m.id);
+}
+
 function writeBatch(db: IndexDatabase, batch: ChatBatch): void {
   withTransaction(db, () => {
+    // Deletions first: other people's words the server no longer has must not outlive it here.
+    deleteIn(db, (p) => `DELETE FROM conversation_messages WHERE id IN (${p})`, batch.deletedMessages);
+    for (const table of [
+      'conversation_messages',
+      'chat_members',
+      'chat_cursors',
+      'conversation_participants',
+    ]) {
+      deleteIn(db, (p) => `DELETE FROM ${table} WHERE conversation_id IN (${p})`, batch.deletedConversations);
+    }
+    deleteIn(db, (p) => `DELETE FROM conversations WHERE id IN (${p})`, batch.deletedConversations);
+
     // A replace resets the aggregates to their defaults; the UPDATE below recomputes them in
     // the same transaction.
     insertMany(
@@ -275,6 +351,7 @@ async function syncAccount(
     chats: 0,
     chatsFetched: 0,
     added: 0,
+    removed: 0,
     chatErrors: 0,
     error: null,
   };
@@ -294,6 +371,14 @@ async function syncAccount(
     const chats = await session.listChats();
     result.chats = chats.length;
     const cursors = loadCursors(db, name, account.id);
+    const stored = options.fullScan ? loadStoredSeqs(db, name, account.id) : null;
+    if (options.fullScan) {
+      // A chat that left the list (deleted, or the user left it) goes with its messages.
+      const live = new Set(chats.map((c) => c.remoteId));
+      for (const chatId of cursors.keys()) {
+        if (!live.has(chatId)) batch.deletedConversations.push(chatConversationId(name, account.id, chatId));
+      }
+    }
 
     for (const chat of chats) {
       const conversationId = chatConversationId(name, account.id, chat.remoteId);
@@ -324,6 +409,11 @@ async function syncAccount(
               const page = await session.fetchHistory(chat.remoteId, null, limit);
               fetched.push(...page.messages);
               if (page.highestSeq !== null) lastSeq = Math.max(lastSeq ?? -1, page.highestSeq);
+              if (stored && cursor) {
+                const gone = deletedBy(page, stored.get(conversationId) ?? []);
+                batch.deletedMessages.push(...gone);
+                result.removed += gone.length;
+              }
             }
           } else {
             for (;;) {
@@ -379,6 +469,7 @@ async function syncAccount(
         syncedAt,
       ]);
     }
+    result.removed += batch.deletedConversations.length;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
   } finally {
@@ -418,6 +509,7 @@ export async function syncChats(
   return {
     accounts: results,
     added: results.reduce((n, r) => n + r.added, 0),
+    removed: results.reduce((n, r) => n + r.removed, 0),
     errors,
     failed: results.length > 0 && errors === results.length,
     budgetExhausted: budget.exhausted,
