@@ -1,0 +1,21 @@
+{
+  "name": "@postbote/signal",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "Signal backend (skeleton): the manifest, the linked-device URL and a provisioning probe over @signalapp/libsignal-client (Rust behind N-API, loaded on GJS through @gjsify/napi). No sync driver yet. Read-only by design.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@postbote/protocol": "*",
+    "@signalapp/libsignal-client": "0.103.0"
+  }
+}

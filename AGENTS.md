@@ -31,6 +31,7 @@ SMTP, no flag write, no move, no delete.
 | `@postbote/store` | SQLite index, sync engines (mailbox + chat), conversations (threading, classification), secret store, XDG paths, file writes | `protocol`, `node:*` |
 | `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
 | `@postbote/whatsapp` | WhatsApp `delivery` backend on Baileys (unofficial protocol: WebSocket, WASM, libsignal), its auth state on `SecretStore`, the QR / pairing-code link | `protocol`, `store`, `baileys`, `node:*` — no `gi://` |
+| `@postbote/signal` | Signal skeleton on `@signalapp/libsignal-client` (Rust behind N-API; on GJS through `@gjsify/napi`): manifest, the `sgnl://linkdevice` URL, the provisioning probe. No sync driver yet, not in the registry | `protocol`, `@signalapp/libsignal-client`, `node:*` — no `gi://` |
 | `@postbote/xmpp` | XMPP `chat` backend on xmpp.js (composed by hand: domain-checked direct TLS, WebSocket, SCRAM), history from MAM only, the account file on `SecretStore`, the login. NEVER sends presence, markers or messages | `protocol`, `store`, `@xmpp/*`, `node:*` — no `gi://` |
 | `@postbote/matrix` | Matrix `chat` backend on matrix-js-sdk + the Rust crypto as WASM (`@matrix-org/matrix-sdk-crypto-wasm`), its crypto store as an in-memory IndexedDB snapshotted into `SecretStore`, the password login | `protocol`, `store`, `matrix-js-sdk`, `@matrix-org/*`, `fake-indexeddb`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
@@ -72,6 +73,7 @@ gjsify workspace postbote-cli build            # → app/dist/postbote.gjs.mjs
 gjsify workspace postbote-cli test             # @gjsify/unit, on gjs AND node
 gjsify run app/dist/postbote.gjs.mjs <command>
 gjsify workspace postbote-cli test:whatsapp-network  # real WhatsApp, no account: up to the QR code
+gjsify workspace postbote-cli test:signal-network    # real Signal, no account: up to the link address
 ```
 
 Tests run on **both** runtimes. That dual run is the entire point of the pure/`*.gjs.ts` split —
