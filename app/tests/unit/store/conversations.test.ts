@@ -194,6 +194,57 @@ export default async () => {
     });
   });
 
+  await describe('bulk writes', async () => {
+    await it('writes every row across several multi-row INSERT chunks', async () => {
+      // 121 threads: many chunks at every table's width, plus a short tail. A `?` in the data
+      // proves the values are bound, not spliced into the SQL text.
+      // Seeded straight into `messages`: through syncIndex the upserts alone took seconds on GJS.
+      const db = freshDb();
+      try {
+        const from = JSON.stringify([BEN]);
+        const to = JSON.stringify([ME]);
+        // The account identity is what makes me@example.com the user, not a participant.
+        db.prepare('INSERT INTO accounts (id, identity, provider) VALUES (?, ?, ?)').run(
+          'acct',
+          'me@example.com',
+          'imap_smtp',
+        );
+        for (let start = 0; start < 121; start += 11) {
+          const rows = Array.from({ length: 11 }, (_, k) => start + k);
+          db.prepare(
+            `INSERT INTO messages (account_id, folder_path, uid, message_id, subject, sender, recipients, date,
+               indexed_at, thread_refs, from_json, to_json)
+             VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+          ).run(
+            ...rows.flatMap((i) => [
+              'acct',
+              'INBOX',
+              i + 1,
+              `<bulk${i}@example.org>`,
+              `Frage ${i}?`,
+              'Ben',
+              'me@example.com',
+              '2026-08-06T10:00:00Z',
+              '2026-08-06T12:00:00Z',
+              '',
+              from,
+              to,
+            ]),
+          );
+        }
+        const result = rebuildMailConversations(db, {});
+        const count = (sql: string) => Number((db.prepare(sql).get() as { n: number }).n);
+        expect(result.conversations).toBe(121);
+        expect(count('SELECT COUNT(*) AS n FROM conversations')).toBe(121);
+        expect(count('SELECT COUNT(*) AS n FROM conversation_messages')).toBe(121);
+        expect(count('SELECT COUNT(*) AS n FROM conversation_participants')).toBe(121);
+        expect(count(`SELECT COUNT(*) AS n FROM conversations WHERE title = 'Frage 120?'`)).toBe(1);
+      } finally {
+        db.close();
+      }
+    });
+  });
+
   await describe('per-sender overrides at read time', async () => {
     await it('promote a stranger into the people list', async () => {
       const { db } = await built();

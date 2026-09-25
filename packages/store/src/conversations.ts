@@ -179,7 +179,105 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
   const directory = new ParticipantDirectory(options.contacts ?? []);
   const threads = buildThreads(rows);
 
-  return withTransaction(db, () => {
+  // Every row is computed first and written afterwards in multi-row INSERTs. One statement per
+  // row made this 5 000 executions for a 5 000-message mailbox, and on gjsify's libgda-backed
+  // `node:sqlite` each execution costs three round trips plus objects that the GC frees late.
+  const messageRows: SqlValue[][] = [];
+  const conversationRows: SqlValue[][] = [];
+  const memberRows: SqlValue[][] = [];
+
+  for (const thread of threads) {
+    const conversationId = stableId('c-', MAIL_BACKEND, thread.accountId, thread.rootKey);
+    const senderEmail = (row: MailRow) => normalizeAddress('email', row.from[0]?.email ?? '');
+    const repliedInThread = thread.members.some((row) => {
+      const email = senderEmail(row);
+      return email !== null && self.has(email);
+    });
+
+    const others = new Set<string>();
+    const verdicts: MessageVerdict[] = [];
+    let unread = 0;
+    let attachments = false;
+
+    for (const row of thread.members) {
+      const email = senderEmail(row);
+      const fromSelf = email !== null && self.has(email);
+      const sender = row.from[0] ? directory.resolve(row.from[0]) : null;
+      for (const address of [...row.from, ...row.recipients]) {
+        const participant = directory.resolve(address);
+        if (participant && !self.has(participant.email)) others.add(participant.id);
+      }
+      const verdict = classifyMail({
+        fromSelf,
+        senderAddress: email,
+        automation: {
+          listId: row.listId,
+          listUnsubscribe: row.listUnsubscribe,
+          autoSubmitted: row.autoSubmitted,
+          precedence: row.precedence,
+        },
+        knownContact: email !== null && directory.isKnown(email),
+        repliedInThread,
+      });
+      verdicts.push({
+        fromSelf,
+        senderAddress: email,
+        classification: verdict.classification,
+        reason: verdict.reason,
+      });
+      if (!fromSelf && !row.seen) unread++;
+      if (row.hasAttachment) attachments = true;
+
+      messageRows.push([
+        stableId('m-', conversationId, row.messageId ?? row.key),
+        conversationId,
+        MAIL_BACKEND,
+        row.accountId,
+        // Mail stays mail in presentation (ADR 0001 §1): a card with subject and attachments.
+        'document',
+        fromSelf ? null : (sender?.id ?? null),
+        sender?.name ?? (row.from[0] ? null : row.sender || null),
+        email ? 'email' : null,
+        email,
+        fromSelf ? 1 : 0,
+        row.sentAt,
+        row.subject,
+        row.seen ? 1 : 0,
+        row.hasAttachment ? 1 : 0,
+        verdict.classification,
+        verdict.reason,
+        row.folderPath,
+        row.uid,
+      ]);
+    }
+
+    const summary = conversationVerdict(verdicts);
+    const first = thread.members[0];
+    const last = thread.members[thread.members.length - 1];
+    conversationRows.push([
+      conversationId,
+      MAIL_BACKEND,
+      thread.accountId,
+      others.size > 1 ? 'group' : 'direct',
+      normalizeSubject(thread.members.find((m) => m.subject)?.subject ?? null),
+      summary.classification,
+      summary.reason,
+      first.sentAt,
+      last.sentAt,
+      thread.members.length,
+      unread,
+      attachments ? 1 : 0,
+    ]);
+    for (const participantId of others) memberRows.push([conversationId, participantId]);
+  }
+
+  const participants = directory.participants();
+  const participantRows = participants.map((p): SqlValue[] => [p.id, p.name, p.contactUid]);
+  const addressRows = participants.flatMap((p) =>
+    (directory.addresses.get(p.id) ?? []).map((a): SqlValue[] => [p.id, a.kind, a.value]),
+  );
+
+  withTransaction(db, () => {
     db.prepare('DELETE FROM conversation_messages WHERE backend = ?').run(MAIL_BACKEND);
     db.prepare(
       'DELETE FROM conversation_participants WHERE conversation_id IN (SELECT id FROM conversations WHERE backend = ?)',
@@ -190,124 +288,52 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
     db.exec('DELETE FROM participant_addresses');
     db.exec('DELETE FROM participants');
 
-    let messageCount = 0;
-    for (const thread of threads) {
-      const conversationId = stableId('c-', MAIL_BACKEND, thread.accountId, thread.rootKey);
-      const senderEmail = (row: MailRow) => normalizeAddress('email', row.from[0]?.email ?? '');
-      const repliedInThread = thread.members.some((row) => {
-        const email = senderEmail(row);
-        return email !== null && self.has(email);
-      });
-
-      const others = new Set<string>();
-      const verdicts: MessageVerdict[] = [];
-      let unread = 0;
-      let attachments = false;
-
-      for (const row of thread.members) {
-        const email = senderEmail(row);
-        const fromSelf = email !== null && self.has(email);
-        const sender = row.from[0] ? directory.resolve(row.from[0]) : null;
-        for (const address of [...row.from, ...row.recipients]) {
-          const participant = directory.resolve(address);
-          if (participant && !self.has(participant.email)) others.add(participant.id);
-        }
-        const verdict = classifyMail({
-          fromSelf,
-          senderAddress: email,
-          automation: {
-            listId: row.listId,
-            listUnsubscribe: row.listUnsubscribe,
-            autoSubmitted: row.autoSubmitted,
-            precedence: row.precedence,
-          },
-          knownContact: email !== null && directory.isKnown(email),
-          repliedInThread,
-        });
-        verdicts.push({
-          fromSelf,
-          senderAddress: email,
-          classification: verdict.classification,
-          reason: verdict.reason,
-        });
-        if (!fromSelf && !row.seen) unread++;
-        if (row.hasAttachment) attachments = true;
-
-        db.prepare(
-          `INSERT OR REPLACE INTO conversation_messages
-             (id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
-              sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
-              classification, classification_reason, folder_path, uid)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          stableId('m-', conversationId, row.messageId ?? row.key),
-          conversationId,
-          MAIL_BACKEND,
-          row.accountId,
-          // Mail stays mail in presentation (ADR 0001 §1): a card with subject and attachments.
-          'document',
-          fromSelf ? null : (sender?.id ?? null),
-          sender?.name ?? (row.from[0] ? null : row.sender || null),
-          email ? 'email' : null,
-          email,
-          fromSelf ? 1 : 0,
-          row.sentAt,
-          row.subject,
-          row.seen ? 1 : 0,
-          row.hasAttachment ? 1 : 0,
-          verdict.classification,
-          verdict.reason,
-          row.folderPath,
-          row.uid,
-        );
-        messageCount++;
-      }
-
-      const summary = conversationVerdict(verdicts);
-      const first = thread.members[0];
-      const last = thread.members[thread.members.length - 1];
-      db.prepare(
-        `INSERT OR REPLACE INTO conversations
-           (id, backend, account_id, kind, title, classification, classification_reason,
-            first_message_at, last_message_at, message_count, unread_count, has_attachments)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        conversationId,
-        MAIL_BACKEND,
-        thread.accountId,
-        others.size > 1 ? 'group' : 'direct',
-        normalizeSubject(thread.members.find((m) => m.subject)?.subject ?? null),
-        summary.classification,
-        summary.reason,
-        first.sentAt,
-        last.sentAt,
-        thread.members.length,
-        unread,
-        attachments ? 1 : 0,
-      );
-      for (const participantId of others) {
-        db.prepare(
-          'INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?)',
-        ).run(conversationId, participantId);
-      }
-    }
-
-    const participants = directory.participants();
-    for (const p of participants) {
-      db.prepare('INSERT INTO participants (id, display_name, contact_uid) VALUES (?, ?, ?)').run(
-        p.id,
-        p.name,
-        p.contactUid,
-      );
-      for (const address of directory.addresses.get(p.id) ?? []) {
-        db.prepare(
-          'INSERT OR IGNORE INTO participant_addresses (participant_id, kind, value) VALUES (?, ?, ?)',
-        ).run(p.id, address.kind, address.value);
-      }
-    }
-
-    return { conversations: threads.length, messages: messageCount, participants: participants.length };
+    insertMany(
+      db,
+      `INSERT OR REPLACE INTO conversation_messages
+         (id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
+          sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
+          classification, classification_reason, folder_path, uid)`,
+      messageRows,
+    );
+    insertMany(
+      db,
+      `INSERT OR REPLACE INTO conversations
+         (id, backend, account_id, kind, title, classification, classification_reason,
+          first_message_at, last_message_at, message_count, unread_count, has_attachments)`,
+      conversationRows,
+    );
+    insertMany(
+      db,
+      'INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id)',
+      memberRows,
+    );
+    insertMany(db, 'INSERT INTO participants (id, display_name, contact_uid)', participantRows);
+    insertMany(db, 'INSERT OR IGNORE INTO participant_addresses (participant_id, kind, value)', addressRows);
   });
+
+  return { conversations: threads.length, messages: messageRows.length, participants: participants.length };
+}
+
+type SqlValue = string | number | null;
+
+/**
+ * Bound values per multi-row INSERT. Measured, not guessed: gjsify's libgda binding costs
+ * roughly the square of the parameter count per statement, while each execution has a fixed
+ * cost of its own. Rebuilding 3 000 messages on GJS took 23 s one row per statement, 9.4 s at
+ * 20 values, 3.7 s at 60, 4.9 s at 150 and 10.3 s at 400.
+ */
+const PARAM_BUDGET = 60;
+
+/** `head VALUES (?, …), (?, …), …` in chunks. Every row must have the same width. */
+function insertMany(db: IndexDatabase, head: string, rows: readonly SqlValue[][]): void {
+  if (rows.length === 0) return;
+  const perChunk = Math.max(1, Math.floor(PARAM_BUDGET / rows[0].length));
+  for (let i = 0; i < rows.length; i += perChunk) {
+    const chunk = rows.slice(i, i + perChunk);
+    const tuple = `(${placeholders(chunk[0].length)})`;
+    db.prepare(`${head} VALUES ${chunk.map(() => tuple).join(', ')}`).run(...chunk.flat());
+  }
 }
 
 // ── reads ──────────────────────────────────────────────────────────────
