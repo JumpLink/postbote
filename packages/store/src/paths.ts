@@ -43,3 +43,19 @@ export function attachmentsDir(env: NodeJS.ProcessEnv = process.env): string {
   if (download && download.startsWith('/')) return download;
   return join(dataDir(env), 'attachments');
 }
+
+/** `$XDG_CONFIG_HOME`, or the spec's default. A relative value is ignored, as for the data home. */
+export function xdgConfigHome(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.XDG_CONFIG_HOME?.trim();
+  return explicit && explicit.startsWith('/') ? explicit : join(homedir(), '.config');
+}
+
+/**
+ * The config file: which backends are enabled, which terms were accepted, and the per-sender
+ * classification overrides. User decisions, not derived data — so it lives under the config
+ * home, apart from the rebuildable index.
+ */
+export function configPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.POSTBOTE_CONFIG?.trim();
+  return explicit || join(xdgConfigHome(env), 'postbote', 'config.json');
+}

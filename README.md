@@ -65,6 +65,12 @@ postbote sync                               # build the local index
 postbote index status                       # what it holds, and how fresh
 postbote index search "wärmepumpe"          # offline, no server contact
 
+postbote conversations list --people-only   # threads with a person in them, newest first
+postbote conversations show <id>            # its messages; bodies only with --bodies
+postbote conversations classify <address> automated   # correct one sender (auto = undo)
+
+postbote backends list                      # message backends, and which are enabled
+
 postbote contacts --query maier
 postbote calendar --from 2026-09-01 --to 2026-09-30
 ```
@@ -84,12 +90,22 @@ there when you genuinely mean arrival.
 Search folds diacritics, so `marz` finds `März`. (`ß` is a letter rather than a
 diacritic, so `grusse` does not find `Grüße`.)
 
+`sync` also groups mail into **conversations** by `Message-ID`, `In-Reply-To` and
+`References`, and classifies each one: *conversational* (a known contact, or a
+thread you replied in) or *automated* (`List-Id`, `List-Unsubscribe`,
+`Auto-Submitted`, `Precedence`, no-reply senders). A stranger nobody replied to
+is held back until you reply or classify the sender. This is the groundwork for
+chat backends ([ADR 0001](docs/adr/0001-multi-protocol-messenger.md)): each
+backend is enabled explicitly in the config, and one with a terms notice only
+after `postbote backends enable <name> --accept-terms`.
+
 ## As an MCP server
 
 `postbote mcp` speaks MCP over stdio. Registered in an MCP client it exposes
 `mail_search`, `mail_get_message`, `mail_list_folders`, `mail_list_parts`,
 `mail_save_attachment`, `mail_search_local`, `mail_sync_status`,
-`contacts_search`, `calendar_list_events` and `accounts_list`.
+`conversations_list`, `conversations_get`, `contacts_search`,
+`calendar_list_events` and `accounts_list`.
 
 The server is read-only by default and **fails closed**: a tool is registered
 only if it declares itself read-only, so a future tool that forgets the
@@ -104,6 +120,11 @@ The local index contains message headers **and** plain-text bodies. It lives at
 and only `postbote sync` ever writes to it — a search never does. Attachments
 are saved to your download directory. Both locations are overridable via
 `POSTBOTE_DATA_DIR`, `POSTBOTE_DB_PATH` and `POSTBOTE_ATTACHMENTS_DIR`.
+
+Your decisions — enabled backends, accepted terms, per-sender classification —
+live in `$XDG_CONFIG_HOME/postbote/config.json` (mode `0600`, override with
+`POSTBOTE_CONFIG`). Unlike the index they cannot be rebuilt from a server, so
+back that file up.
 
 Nothing is sent anywhere. Postbote talks to your mail server and to nothing else.
 

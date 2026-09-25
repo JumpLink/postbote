@@ -1,23 +1,34 @@
 /**
  * Index actions — building the local index and reporting on it.
  *
- * This module is where the two halves are joined: `@postbote/imap` provides the backend,
- * `@postbote/store` owns the database and the algorithm, and neither imports the other. The
+ * This module is where the two halves are joined: the registry provides the enabled backends,
+ * `@postbote/store` owns the database and the algorithms, and neither imports the other. The
  * injection happens here and nowhere else.
  */
 
-import { ImapBackend } from '@postbote/imap';
-import type { IndexSearchCriteria, IndexedMessage, SyncResult, SyncStatus } from '@postbote/store';
+import { searchContacts } from '@postbote/gnome';
+import { type ContactDTO, isMailBackend } from '@postbote/protocol';
+import type {
+  IndexSearchCriteria,
+  IndexedMessage,
+  RebuildResult,
+  SyncResult,
+  SyncStatus,
+} from '@postbote/store';
 import {
+  configPath,
   ensurePrivateDir,
   indexDbPath,
   migrate,
   openIndexDb,
   probeFts5,
+  rebuildMailConversations,
   searchIndex,
   syncIndex,
   syncStatus,
 } from '@postbote/store';
+import { builtinRegistry } from '../backends/builtin.ts';
+import { loadConfig } from '../config.ts';
 import { chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -63,17 +74,80 @@ export interface SyncParams {
   folder?: string;
   fullScan?: boolean;
   dbPath?: string;
+  configPath?: string;
 }
 
-/** Build or update the local index. The only operation that writes to it. */
-export async function indexSync(params: SyncParams = {}): Promise<SyncResult> {
+export interface IndexSyncResult extends SyncResult {
+  /** The enabled backends this run synced, by name. */
+  backends: string[];
+  conversations: RebuildResult & {
+    /** Contacts the classifier knew about; null when the address book was unreachable. */
+    contacts: number | null;
+  };
+}
+
+/** Far above any real address book: this is a full read for the classifier, not a search. */
+const CONTACTS_FOR_CLASSIFIER = 1_000_000;
+
+/**
+ * The address book, for `known-contact` and participant linking — or null when EDS cannot be
+ * reached (Node, a headless session). Conversations are still built then, just without it; the
+ * result says so rather than pretending the address book was empty.
+ */
+async function addressBook(): Promise<ContactDTO[] | null> {
+  try {
+    return await searchContacts({ limit: CONTACTS_FOR_CLASSIFIER });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build or update the local index from every ENABLED backend, then rebuild the conversations.
+ * The only operation that writes to the index.
+ */
+export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResult> {
+  const plugins = builtinRegistry().enabled(loadConfig(params.configPath ?? configPath()));
+  if (plugins.length === 0) {
+    throw new Error(
+      'no backend is enabled — `postbote backends list` shows them, `backends enable <name>` turns one on',
+    );
+  }
   const db = openIndex(params.dbPath ?? indexDbPath());
   try {
-    return await syncIndex(db, new ImapBackend(), {
-      accountId: params.accountId,
-      folderPath: params.folder,
-      fullScan: params.fullScan,
-    });
+    const results: SyncResult[] = [];
+    for (const plugin of plugins) {
+      const backend = plugin.create();
+      // The engine is chosen by the driver the backend implements, never by its name.
+      if (!isMailBackend(backend)) {
+        throw new Error(
+          `backend ${plugin.manifest.name} uses the ${backend.kind} driver, which this postbote cannot sync yet`,
+        );
+      }
+      results.push(
+        await syncIndex(db, backend, {
+          accountId: params.accountId,
+          folderPath: params.folder,
+          fullScan: params.fullScan,
+        }),
+      );
+    }
+    const contacts = await addressBook();
+    // Sync and rebuild write in multi-row batches: gjsify's sqlite has a per-process budget of
+    // executions (gjsify gap, unfixed, gjsify#1838 — see `insertMany`).
+    const conversations = rebuildMailConversations(db, { contacts: contacts ?? [] });
+    const folders = results.flatMap((r) => r.folders);
+    const errors = results.reduce((n, r) => n + r.errors, 0);
+    return {
+      folders,
+      added: results.reduce((n, r) => n + r.added, 0),
+      updated: results.reduce((n, r) => n + r.updated, 0),
+      removed: results.reduce((n, r) => n + r.removed, 0),
+      errors,
+      failed: folders.length > 0 && errors === folders.length,
+      backends: plugins.map((p) => p.manifest.name),
+      conversations: { ...conversations, contacts: contacts?.length ?? null },
+    };
   } finally {
     db.close();
   }

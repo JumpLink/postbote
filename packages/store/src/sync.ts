@@ -18,10 +18,10 @@ import {
   getFolderCursor,
   indexedFlags,
   setFolderCursor,
-  updateFlags,
+  updateFlagsBatch,
   upsertAccount,
   upsertFolder,
-  upsertMessage,
+  upsertMessages,
 } from './index-store.ts';
 
 export interface SyncOptions {
@@ -150,14 +150,13 @@ async function syncFolder(
     for (;;) {
       const batch = await session.fetchNewer(folder.path, highest, options.batchSize);
       if (batch.length === 0) break;
-      for (const message of batch) {
-        // `<n>:*` always returns at least the highest existing UID even when n is past the end,
-        // so anything at or below the cursor is a duplicate of what is already indexed.
-        if (message.uid <= highest) continue;
-        upsertMessage(db, accountId, folder.path, message, options.now.toISOString());
-        result.added++;
-        if (message.uid > highest) highest = message.uid;
-      }
+      // `<n>:*` always returns at least the highest existing UID even when n is past the end,
+      // so anything at or below the cursor is a duplicate of what is already indexed.
+      const fresh = batch.filter((m) => m.uid > highest);
+      // One transaction per batch: see upsertMessages for why rows are not written one by one.
+      upsertMessages(db, accountId, folder.path, fresh, options.now.toISOString());
+      result.added += fresh.length;
+      for (const message of fresh) if (message.uid > highest) highest = message.uid;
       // A batch that advanced nothing would loop forever.
       if (batch.every((m) => m.uid <= lastUid)) break;
       if (batch.length < options.batchSize) break;
@@ -171,13 +170,14 @@ async function syncFolder(
       const liveUids = new Set(live.map((f) => f.uid));
       const known = indexedFlags(db, accountId, folder.path);
 
-      for (const state of live) {
+      const drifted = live.filter((state) => {
         const current = known.get(state.uid);
-        if (!current) continue; // not indexed yet — the next append pass will pick it up
-        if (current.seen === state.seen && current.flagged === state.flagged) continue;
-        updateFlags(db, accountId, folder.path, state.uid, state);
-        result.updated++;
-      }
+        // Not indexed yet — the next append pass will pick it up.
+        if (!current) return false;
+        return current.seen !== state.seen || current.flagged !== state.flagged;
+      });
+      updateFlagsBatch(db, accountId, folder.path, drifted);
+      result.updated += drifted.length;
 
       const gone = [...known.keys()].filter((uid) => !liveUids.has(uid));
       result.removed = deleteMessages(db, accountId, folder.path, gone);

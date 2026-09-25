@@ -25,11 +25,16 @@ import {
   quotedPrintableToBytes,
   base64ToBytes,
   attachmentParts,
+  extractHeaderFields,
+  parseMessageIdList,
+  parseThreadHeaders,
+  threadHeaderFetchItem,
   tokenizeImapList,
   walkBodyStructure,
 } from '@postbote/protocol';
 import { listMailTargets } from '@postbote/gnome';
 import { ImapClient, type ImapResponse } from './client.gjs.ts';
+import { MAIL_MANIFEST } from './manifest.ts';
 
 /**
  * How much body text is indexed per message.
@@ -97,7 +102,7 @@ class ImapBackendSession implements BackendSession {
     const start = afterUid + 1;
     const response = await this.client.fetchRange(
       `${start}:*`,
-      '(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE)',
+      `(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE ${threadHeaderFetchItem()})`,
     );
     if (!response.ok) return [];
 
@@ -111,6 +116,7 @@ class ImapBackendSession implements BackendSession {
       if (!Number.isInteger(uid) || uid < start) continue;
 
       const env = parseEnvelope(fetch.envelope);
+      const thread = parseThreadHeaders(extractHeaderFields(items));
       const parts = walkBodyStructure(fetch.bodyStructure);
       const bodyPart = pickBodyPart(parts);
       const attachments = attachmentParts(parts).map((p) => ({
@@ -146,6 +152,14 @@ class ImapBackendSession implements BackendSession {
         hasAttachment: attachments.length > 0,
         attachments,
         bodyText,
+        from: env.from,
+        to: env.to,
+        cc: env.cc,
+        // ENVELOPE's In-Reply-To is the fallback for a server that answered the header fetch
+        // with nothing; both are the same header.
+        inReplyTo: thread.inReplyTo ?? parseMessageIdList(env.inReplyTo)[0] ?? null,
+        references: thread.references,
+        automation: thread.automation,
       });
     }
     // Ascending, so the engine's cursor advances monotonically.
@@ -181,6 +195,8 @@ class ImapBackendSession implements BackendSession {
 
 /** The live IMAP backend, resolving accounts through GNOME Online Accounts. */
 export class ImapBackend implements MailBackend {
+  readonly manifest = MAIL_MANIFEST;
+  readonly kind = 'mailbox' as const;
   private targets: MailTarget[] | null = null;
 
   private async allTargets(): Promise<MailTarget[]> {

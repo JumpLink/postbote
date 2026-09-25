@@ -25,6 +25,7 @@ import {
   type MailSummaryDTO,
   type SearchMailOptions,
 } from '@postbote/protocol';
+import { MAIL_MANIFEST } from './manifest.ts';
 
 export async function searchMail(_options: SearchMailOptions): Promise<MailSummaryDTO[]> {
   throw new GnomeUnavailableError(GJS_REQUIRED_MESSAGE);
@@ -54,6 +55,9 @@ export async function fetchPart(
  * a missing export here type-checks the whole app against `undefined`.
  */
 export class ImapBackend {
+  readonly manifest = MAIL_MANIFEST;
+  readonly kind = 'mailbox' as const;
+
   async listAccounts(): Promise<never> {
     throw new GnomeUnavailableError(GJS_REQUIRED_MESSAGE);
   }

@@ -1,105 +1,12 @@
 import { describe, expect, it } from '@gjsify/unit';
 
-import type {
-  BackendFlagState,
-  BackendMessage,
-  BackendSession,
-  FolderInfo,
-  MailBackend,
-} from '@postbote/protocol';
-import { migrate, openIndexDb, searchIndex, syncIndex, syncStatus } from '@postbote/store';
+import { searchIndex, syncIndex, syncStatus } from '@postbote/store';
+import { AT, FakeBackend, folder, freshDb, message } from './fixtures.ts';
 
 /**
- * The sync engine is the most intricate code in the project, and this suite is why the
- * `MailBackend` port exists: a fake server plus an in-memory database exercises UIDVALIDITY
- * resets, expunges, flag drift and the cheap no-op path with no network, no GOA and no mailbox.
- *
- * All fixture content is synthetic.
+ * The sync engine is the most intricate code in the project: UIDVALIDITY resets, expunges,
+ * flag drift and the cheap no-op path, against the fake server in fixtures.ts.
  */
-
-function folder(path: string, name = path, role: string | null = null): FolderInfo {
-  return {
-    path,
-    name,
-    delimiter: '/',
-    attributes: [],
-    selectable: true,
-    role: role as never,
-    roleSource: null,
-  };
-}
-
-function message(uid: number, subject: string, body = 'body text'): BackendMessage {
-  return {
-    uid,
-    messageId: `<${uid}@example.org>`,
-    subject,
-    sender: 'Someone <someone@example.org>',
-    recipients: 'me@example.com',
-    date: `2026-0${((uid % 9) + 1).toString()}-01T10:00:00.000Z`,
-    internalDate: `2026-0${((uid % 9) + 1).toString()}-01T10:00:05.000Z`,
-    size: 1000 + uid,
-    seen: false,
-    flagged: false,
-    hasAttachment: false,
-    attachments: [],
-    bodyText: body,
-  };
-}
-
-/** A scriptable in-memory IMAP server. */
-class FakeBackend implements MailBackend {
-  folders: FolderInfo[] = [folder('INBOX', 'INBOX', 'inbox')];
-  messages = new Map<string, BackendMessage[]>();
-  uidValidity = 1;
-  uidNext = 1;
-  /** Counts round trips so the no-op path can be proven to skip work. */
-  opened = 0;
-  flagScans = 0;
-  closed = 0;
-
-  put(path: string, msgs: BackendMessage[]): void {
-    this.messages.set(path, msgs);
-    this.uidNext = Math.max(this.uidNext, ...msgs.map((m) => m.uid + 1));
-  }
-
-  async listAccounts() {
-    return [{ id: 'acct', identity: 'me@example.com', provider: 'imap_smtp' }];
-  }
-
-  connect = async (): Promise<BackendSession> => ({
-    listFolders: async () => this.folders,
-    openFolder: async (path: string) => {
-      this.opened++;
-      return {
-        uidValidity: this.uidValidity,
-        uidNext: this.uidNext,
-        exists: (this.messages.get(path) ?? []).length,
-      };
-    },
-    fetchNewer: async (path: string, afterUid: number, batchSize: number) =>
-      (this.messages.get(path) ?? []).filter((m) => m.uid > afterUid).slice(0, batchSize),
-    listFlags: async (path: string): Promise<BackendFlagState[]> => {
-      this.flagScans++;
-      return (this.messages.get(path) ?? []).map((m) => ({
-        uid: m.uid,
-        seen: m.seen,
-        flagged: m.flagged,
-      }));
-    },
-    close: async () => {
-      this.closed++;
-    },
-  });
-}
-
-function freshDb() {
-  const db = openIndexDb(':memory:');
-  migrate(db);
-  return db;
-}
-
-const AT = (iso: string) => () => new Date(iso);
 
 export default async () => {
   await describe('initial sync', async () => {
@@ -395,5 +302,41 @@ export default async () => {
         db.close();
       }
     });
+  });
+
+  await describe('a full resync of a large folder', async () => {
+    await it(
+      'completes, and every read afterwards is complete',
+      async () => {
+        // The v2 upgrade resets every cursor, so the next sync re-fetches whole folders. On
+        // gjsify's sqlite each execution leaks a GWeakRef (gjsify gap, unfixed,
+        // gjsify#1838); at ~15 executions a message the old one-row-at-a-time
+        // writes broke the index after ~5 400 messages, and every SELECT then returned [].
+        // 6 000 fetched twice is 12 000 upserts — far past that point — in one process.
+        const n = 6000;
+        const db = freshDb();
+        const backend = new FakeBackend();
+        backend.put(
+          'INBOX',
+          Array.from({ length: n }, (_, i) => message(i + 1, `Betreff ${i}`, `Text ${i}`)),
+        );
+        try {
+          const first = await syncIndex(db, backend, { now: AT('2026-08-06T12:00:00Z') });
+          expect(first.added).toBe(n);
+          db.exec('UPDATE folders SET last_uid = 0, uid_next = NULL, message_count = NULL');
+          const again = await syncIndex(db, backend, { now: AT('2026-08-07T12:00:00Z') });
+          expect(again.added).toBe(n);
+          expect(again.errors).toBe(0);
+
+          expect(db.prepare('SELECT uid FROM messages').all().length).toBe(n);
+          expect(db.prepare('SELECT rowid FROM messages_fts').all().length).toBe(n);
+          expect(searchIndex(db, { query: 'Betreff', limit: 100 }).length).toBe(100);
+          expect(searchIndex(db, { query: `Text ${n - 1}`, limit: 5 }).length).toBe(1);
+        } finally {
+          db.close();
+        }
+      },
+      { timeout: 300_000 },
+    );
   });
 };

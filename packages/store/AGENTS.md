@@ -17,7 +17,7 @@ can be unit-tested on Node against a fake backend and `:memory:`. If you want to
 ## SQLite here is libgda, not sqlite3
 
 gjsify's `node:sqlite` is a **libgda 6.0 wrapper**. The API is `DatabaseSync`, so it looks like
-Node's, but four behaviours leak through and every one of them will bite you.
+Node's, but five behaviours leak through and every one of them will bite you.
 
 | # | Behaviour | What it forces |
 |---|---|---|
@@ -25,6 +25,7 @@ Node's, but four behaviours leak through and every one of them will bite you.
 | b | `exec()` splits multi-statement strings itself and does not understand `BEGIN … END` | **No triggers.** A trigger body would be cut into broken fragments. One statement per array entry in `schema.ts`, and no SQL comments inside those strings — the splitter is not a SQL parser. |
 | c | Parameters are **interpolated as escaped SQL literals**, not bound | Positional `?` only. The named path substitutes `:name` across the whole statement without excluding string literals. Do not store BLOBs. |
 | d | An FTS `SELECT` parses as `UNKNOWN`, so the wrapper tries `execute_non_select`, throws, and retries as a select | **Every FTS query runs twice.** Keep them narrow — `rowid` + `rank`, with a `LIMIT` — and hydrate the rows in a second, ordinary `SELECT`. |
+| e | libgda caches every executed statement per connection, and each holds a GWeakRef on the SQLite provider, which the whole PROCESS shares (GLib caps it at 65 535). A `run()` costs ~4 (it also selects `changes()` and `last_insert_rowid()`), so after ~16 000 of them in one process every SELECT returns `[]` on any connection, a fresh one included (see (a)). Measured: three connections of 10 000 `run()` each, each closed before the next, broke on the third, so closing connections did not keep a process under the limit. Gap unfixed in 0.49.0; the core fix is gjsify#1838 | **Count executions.** Bulk writes go through `insertMany` (multi-row, 120 bound values a statement; parse cost grows with the square of the parameter count) and set-based `uid IN (…)` chunks. Never one `run()` per message. The 6 000-message resync test in `sync.test.ts` fails on per-row writes. |
 
 Two more, smaller:
 
@@ -37,6 +38,16 @@ Two more, smaller:
 Because of (b) the FTS table is maintained by application code, in the same transaction as the
 `messages` write. That is better than a trigger anyway: an `AFTER UPDATE` trigger would fire on
 every `\Seen` change and rewrite the whole FTS row, body included.
+
+## Conversations are derived
+
+`conversations`, `conversation_messages`, `participants` and their link tables are rewritten
+from `messages` by `rebuildMailConversations` after every sync, in one transaction. Threading
+is a union over the whole mailbox and a message's class depends on its thread (did the user
+reply?), so a full rebuild is the simple correct form; ids are hashes of stable inputs, so they
+survive it. Per-sender overrides are NOT stored here — they come from the config and apply at
+read time, and `peopleOnlyClause` (SQL) must keep agreeing with `conversationVerdict` (JS);
+a test pins both directions.
 
 ## Where data lives — the actual privacy guarantee
 

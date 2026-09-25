@@ -21,7 +21,7 @@
 
 import { type IndexDatabase, withTransaction } from './db.ts';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * The FTS5 DDL. Defined once so the baseline and any future rebuild cannot drift.
@@ -101,13 +101,138 @@ const STATEMENTS: readonly string[] = [
      updated INTEGER NOT NULL DEFAULT 0,
      removed INTEGER NOT NULL DEFAULT 0,
      error TEXT)`,
+
+  // ── conversations (v2) ─────────────────────────────────────────────
+  // Derived tables: `rebuildMailConversations` rewrites them from `messages` after each sync,
+  // so they never hold anything the mail rows do not. A delivery-only backend will write its
+  // own rows here directly, and at that point they become the only copy (ADR 0001 §2).
+
+  `CREATE TABLE IF NOT EXISTS participants (
+     id TEXT PRIMARY KEY,
+     display_name TEXT,
+     contact_uid TEXT)`,
+
+  // (kind, value) is the key: one address belongs to exactly one participant.
+  `CREATE TABLE IF NOT EXISTS participant_addresses (
+     participant_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     value TEXT NOT NULL,
+     PRIMARY KEY (kind, value))`,
+
+  `CREATE INDEX IF NOT EXISTS participant_addresses_owner ON participant_addresses (participant_id)`,
+
+  `CREATE TABLE IF NOT EXISTS conversations (
+     id TEXT PRIMARY KEY,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     title TEXT,
+     classification TEXT NOT NULL,
+     classification_reason TEXT NOT NULL,
+     first_message_at TEXT,
+     last_message_at TEXT,
+     message_count INTEGER NOT NULL DEFAULT 0,
+     unread_count INTEGER NOT NULL DEFAULT 0,
+     has_attachments INTEGER NOT NULL DEFAULT 0)`,
+
+  `CREATE INDEX IF NOT EXISTS conversations_last ON conversations (last_message_at DESC)`,
+
+  `CREATE TABLE IF NOT EXISTS conversation_participants (
+     conversation_id TEXT NOT NULL,
+     participant_id TEXT NOT NULL,
+     PRIMARY KEY (conversation_id, participant_id))`,
+
+  // `folder_path` + `uid` locate a mail message for `mail_get_message`; every other backend
+  // leaves them null and stores the network's own message id in `remote_id`.
+  `CREATE TABLE IF NOT EXISTS conversation_messages (
+     id TEXT PRIMARY KEY,
+     conversation_id TEXT NOT NULL,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     presentation TEXT NOT NULL,
+     sender_participant_id TEXT,
+     sender_name TEXT,
+     sender_kind TEXT,
+     sender_address TEXT,
+     from_self INTEGER NOT NULL DEFAULT 0,
+     sent_at TEXT,
+     subject TEXT,
+     seen INTEGER NOT NULL DEFAULT 0,
+     has_attachments INTEGER NOT NULL DEFAULT 0,
+     classification TEXT NOT NULL,
+     classification_reason TEXT NOT NULL,
+     folder_path TEXT,
+     uid INTEGER,
+     remote_id TEXT)`,
+
+  `CREATE INDEX IF NOT EXISTS conversation_messages_conv ON conversation_messages (conversation_id, sent_at)`,
 ];
 
 /**
- * Per-version upgrade steps, applied in order for a database below SCHEMA_VERSION.
- * Empty at v1; the array exists so the first migration has an obvious home.
+ * One upgrade step: a plain statement, or a column to add.
+ *
+ * Columns are declared, not written as `ALTER TABLE … ADD COLUMN`, so the step can check first:
+ * a binary from before this check (v1 is released) rewrites `schema_version` back to its own
+ * number when it opens a newer index, and the next newer binary then replays the upgrade
+ * against columns that already exist. SQLite has no `ADD COLUMN IF NOT EXISTS`.
  */
-const UPGRADES: Record<number, readonly string[]> = {};
+type UpgradeStep = string | { table: string; column: string; type: string };
+
+/**
+ * Per-version upgrade steps, applied in order for a database below SCHEMA_VERSION.
+ *
+ * A fresh database runs them too (it starts at version 0), so a column is added HERE and never
+ * in the `CREATE TABLE` above — declared in both places, the ALTER would fail on a new index.
+ * Every step must be safe to run twice, for the reason given at `UpgradeStep`.
+ */
+const UPGRADES: Record<number, readonly UpgradeStep[]> = {
+  // v2: what threading and classification read. Stored as fetched; the conversation tables
+  // are derived from them.
+  2: [
+    { table: 'messages', column: 'in_reply_to', type: 'TEXT' },
+    { table: 'messages', column: 'thread_refs', type: 'TEXT' },
+    { table: 'messages', column: 'from_json', type: 'TEXT' },
+    { table: 'messages', column: 'to_json', type: 'TEXT' },
+    { table: 'messages', column: 'list_id', type: 'TEXT' },
+    { table: 'messages', column: 'list_unsubscribe', type: 'TEXT' },
+    { table: 'messages', column: 'auto_submitted', type: 'TEXT' },
+    { table: 'messages', column: 'precedence', type: 'TEXT' },
+    // Rows indexed under v1 lack all of the above. The index is derived (server archive), so
+    // the honest fix is to fetch them again: resetting the cursors makes the next sync re-index
+    // every folder, and `upsertMessage` replaces each row in place.
+    'UPDATE folders SET last_uid = 0, uid_next = NULL, message_count = NULL',
+  ],
+};
+
+function columnsOf(db: IndexDatabase, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  return new Set(rows.map((r) => String(r.name)));
+}
+
+function applyStep(db: IndexDatabase, step: UpgradeStep): void {
+  if (typeof step === 'string') {
+    db.exec(step);
+    return;
+  }
+  if (columnsOf(db, step.table).has(step.column)) return;
+  db.exec(`ALTER TABLE ${step.table} ADD COLUMN ${step.column} ${step.type}`);
+}
+
+/** Thrown when the index was written by a newer postbote than the one opening it. */
+export class IndexTooNewError extends Error {
+  readonly found: number;
+  readonly supported: number;
+
+  constructor(found: number, supported: number) {
+    super(
+      `the index is schema version ${found}, but this postbote only knows up to ${supported} — ` +
+        'update postbote (or point POSTBOTE_DB_PATH at another index); the index was left untouched',
+    );
+    this.name = 'IndexTooNewError';
+    this.found = found;
+    this.supported = supported;
+  }
+}
 
 function readVersion(db: IndexDatabase): number {
   try {
@@ -122,13 +247,19 @@ function readVersion(db: IndexDatabase): number {
   }
 }
 
-/** Create or upgrade the schema. Safe to call on every open. */
+/**
+ * Create or upgrade the schema. Safe to call on every open.
+ *
+ * Refuses an index from a NEWER postbote and leaves it untouched: writing our own, lower
+ * version into it would make the newer binary replay its upgrades on the next open.
+ */
 export function migrate(db: IndexDatabase): void {
   const from = readVersion(db);
+  if (from > SCHEMA_VERSION) throw new IndexTooNewError(from, SCHEMA_VERSION);
   withTransaction(db, () => {
     for (const statement of STATEMENTS) db.exec(statement);
     for (let v = from + 1; v <= SCHEMA_VERSION; v++) {
-      for (const statement of UPGRADES[v] ?? []) db.exec(statement);
+      for (const step of UPGRADES[v] ?? []) applyStep(db, step);
     }
     db.prepare(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)`).run(
       String(SCHEMA_VERSION),
