@@ -1,0 +1,23 @@
+{
+  "name": "@postbote/signal",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "Signal backend: the delivery sync driver over @signalapp/libsignal-client (Rust behind N-API; on GJS through @gjsify/napi, loaded on first use), its protocol stores on postbote's SecretStore, the QR link as a linked device, and a fail-closed request gate. Read-only.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@postbote/protocol": "*",
+    "@postbote/store": "*",
+    "@signalapp/libsignal-client": "0.103.0",
+    "qrcode-generator": "2.0.4"
+  }
+}

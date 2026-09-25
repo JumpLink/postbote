@@ -32,6 +32,9 @@ is built on, which is where this is headed.
 - **WhatsApp** (optional, off by default, **unofficial — risks your account**) —
   your chats as a linked device through [Baileys](https://github.com/WhiskeySockets/Baileys).
   See [WhatsApp](#whatsapp).
+- **Signal** (optional, off by default, **not an official client**) — your
+  chats as a linked device through [libsignal](https://github.com/signalapp/libsignal),
+  the library Signal's own apps are built on. See [Signal](#signal).
 - **XMPP / Jabber** (optional, off by default) — direct chats with your roster
   and the rooms you joined, read from the server's message archive (MAM) through
   [xmpp.js](https://github.com/xmppjs/xmpp.js). See [XMPP](#xmpp).
@@ -47,7 +50,9 @@ message, no read receipt, no online presence (see [WhatsApp](#whatsapp) for the
 one acknowledgement every linked device sends). XMPP likewise — Postbote never
 sends a presence, so contacts do not see it online and your offline messages
 stay queued for your real clients. Matrix too: no presence, no read
-receipt, no typing notice, no message, and no invitation is accepted.
+receipt, no typing notice, no message, and no invitation is accepted. Signal
+too: no message, no receipt, no typing notice (see [Signal](#signal) for the
+acknowledgement and the two requests at link time).
 
 ## Requirements
 
@@ -225,6 +230,79 @@ The link leaves a **session file** at
 device's Signal keys. Whoever holds it can read your incoming WhatsApp messages —
 back it up like a password, never share it. The account id is your LID,
 WhatsApp's privacy id, never your phone number.
+
+## Signal
+
+> **Read this first.** Signal offers no API and does not license third-party
+> clients. Postbote is **not an official Signal client** and Signal does not
+> support it. It uses libsignal, Signal's own library, and links like Signal
+> Desktop. Independent clients of this kind (signal-cli, Flare, Whisperfish) are
+> used without known account bans, but Signal could block them at any time.
+
+Postbote joins your Signal account as a **linked device**, like Signal Desktop:
+
+```bash
+postbote backends enable signal --accept-terms   # shows the notice above once
+postbote accounts add signal                     # prints a QR code
+postbote sync                                    # right away — see below
+postbote conversations list --people-only
+```
+
+Linking, step by step:
+
+1. Run `postbote accounts add signal`. A QR code appears in the terminal.
+2. On the phone: *Signal → Settings → Linked devices → Link new device* (the `+`),
+   and scan the code. If the terminal prints a fresh code, scan that one: Signal
+   replaces the connection behind a code after a while.
+3. The phone asks you to confirm linking a device named `postbote` (set
+   `backends.signal.settings.deviceName` in the config to change it). Confirm.
+4. The terminal says *Linked*. The phone now lists `postbote` under *Linked
+   devices*; unlink it there to end it.
+5. Run `postbote sync`.
+
+Signal runs on **linux-x64 and macOS arm64** (libsignal is a native addon that
+postbote loads through gjsify's N-API host). On another platform the rest of
+postbote works; `accounts add signal` says libsignal did not load.
+
+**Signal keeps no archive.** The server holds a message for a device only until
+that device receives it, so what postbote stores is the **only copy** — its part
+of the index is irreplaceable, not a cache. Consequences:
+
+- **Postbote gets no history.** A linked device receives what arrives after it
+  was linked; the phone's older messages stay on the phone.
+- **Sync regularly.** `sync` connects, receives what was queued, writes it and
+  disconnects once Signal reports the queue empty (it stops after ten minutes and
+  says so). Signal unlinks a device that stays offline too long; after that,
+  `sync` reports it and you link again (the conversations stay, under the same
+  account id).
+- **Back up the index** (`$XDG_DATA_HOME/postbote/index.db`) like the config.
+
+What arrives: direct and group messages (sealed sender included), your own
+messages sent from the phone, edits, deletions (for everyone, and the ones you
+make on the phone), read receipts for your messages, and the contact list when
+the phone sends it (it does after linking and when contacts change; the
+download needs Node for now, see below). Groups appear without their name —
+Signal keeps group names encrypted on its group server, which postbote does not
+query. Reading a chat on the phone is not mirrored: messages arrive unread.
+
+What postbote sends: at link time, two requests — it registers the device with
+the one-time code the phone sent, and publishes one batch of pre-keys so
+contacts can start encrypted sessions with it. During `sync`, only the
+acknowledgement of each received message (without it Signal would deliver it
+again), and only after the message is written to disk. Never a message, a read
+or delivery receipt, a typing notice, a request to the phone, or a retry request
+for a message it could not decrypt — `sync` counts those and reports them.
+
+The link leaves a **session file** at
+`$XDG_DATA_HOME/postbote/secrets/signal/signal-<ACI>.db` (mode `0600`): your
+account's identity key and this device's keys. Whoever holds it can read your
+incoming Signal messages — back it up like a password, never share it. The
+account id carries your ACI (Signal's account UUID), never your phone number.
+
+Known gap: the contact list is downloaded from Signal's CDN, which needs Signal's
+own root certificate; on GJS, gjsify's `node:https` does not take one yet, so
+`sync` reports the contact list as not read and people appear by their Signal id
+until the next contact sync after that is fixed.
 
 ## XMPP
 

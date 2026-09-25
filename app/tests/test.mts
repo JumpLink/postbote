@@ -30,6 +30,7 @@ import storeChatSync from './unit/store/chat-sync.test.ts';
 import storeDeliverySync from './unit/store/delivery-sync.test.ts';
 
 import telegram from './unit/telegram/telegram.test.ts';
+import signal from './unit/signal/signal.test.ts';
 import whatsapp from './unit/whatsapp/whatsapp.test.ts';
 import xmpp from './unit/xmpp/xmpp.test.ts';
 import matrix from './unit/matrix/matrix.test.ts';
@@ -66,6 +67,7 @@ run({
   storeChatSync,
   storeDeliverySync,
   telegram,
+  signal,
   whatsapp,
   xmpp,
   matrix,

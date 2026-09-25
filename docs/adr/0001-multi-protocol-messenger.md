@@ -84,12 +84,39 @@ GObject Introspection.
 |---|---|---|
 | Telegram | **mtcute** (TypeScript, MIT) | runtime packages for Node, Bun, Deno, web; crypto in a `wasm` package, no native addon |
 | Matrix | **matrix-rust-sdk** behind our own napi-rs crate — spike first | no Node binding in the tree (only uniffi FFI); `matrix-sdk-sqlite` store; Fractal builds on it |
-| Signal | **presage** behind our own napi-rs crate, or **`@signalapp/libsignal-client`** (Neon/N-API) with a TypeScript service layer modelled on Signal-Desktop's `ts/textsecure/` — spike decides | presage: AGPL, no binding, SQLite(+SQLCipher) store; Flare reaches it through its own `flare-backend` wrapper |
+| Signal | **`@signalapp/libsignal-client`** (Neon/N-API, Signal's own prebuilds) with a TypeScript service layer ported from Signal-Desktop's `ts/textsecure/` — **decided by the spike below**; presage rejected | presage: AGPL, no binding, SQLite(+SQLCipher) store; Flare reaches it through its own `flare-backend` wrapper |
 | XMPP | **xmpp.js** (ISC) | no OMEMO anywhere in the tree; Dino ships its OWN OMEMO (`plugins/omemo/`, Vala+C) — the model for ours |
 | WhatsApp | **Baileys** (MIT) | depends on `libsignal` and `whatsapp-rust-bridge`: not pure TypeScript |
 
 Every candidate's license is compatible with postbote's AGPL-3.0-or-later (AGPL, MIT, ISC,
 MPL-2.0, LGPL-2.1).
+
+#### Signal: the spike (2026-09)
+
+Measured, not assumed:
+
+- **libsignal-client runs on GJS unmodified.** Its published linux-x64 `.node` (0.103.0) loads
+  through gjsify's N-API host (`@gjsify/napi`). Keys, a PQXDH session from a pre-key bundle,
+  encrypt/decrypt both ways, sealed sender and sender-key groups pass on GJS and Node alike. The
+  store calls go from Rust back into JavaScript through thread-safe functions, so the async half
+  of the host carries real traffic, not only synchronous calls.
+- **The network has to be libsignal's.** `chat.signal.org` and the attachment CDNs chain to
+  Signal's own root CA. A W3C WebSocket cannot pin a root, and gjsify's `node:https` ignores
+  `ca` (gjsify gap, unfixed). libsignal-net pins the root itself and carries TLS, the WebSocket
+  and the framing inside the addon: its provisioning socket reached production and returned a
+  link address in ~0.4 s on GJS. Signal-Desktop takes the same path
+  (`SocketManager.getProvisioningConnection` → `connectProvisioning`).
+- **presage costs more for less.** It sits on whisperfish's `libsignal-service-rs`, pinned to a
+  git revision that pins libsignal's Rust crates and BoringSSL (552 crates in its lockfile).
+  Using it means our own napi-rs crate plus a Rust+C++ build per platform in CI; Flare needs
+  ~3.4k lines of `src/backend/` to wrap it. libsignal-client comes with prebuilds Signal
+  maintains for linux, darwin and win32 (x64, arm64) and keeps in step with the server.
+
+Consequence: Signal ships as `native: true` where gjsify's N-API host runs — **linux-x64 and
+darwin-arm64 today** (win32 waits on gjs itself). postbote loads the addon only when Signal is
+used, so the rest of postbote starts where it does not. The service layer (linking, envelope
+decryption, sync messages, contact sync) is ported from Signal-Desktop with attribution; both
+are AGPL.
 
 ### 7. Web standards first — and gaps are fixed in gjsify
 
@@ -115,8 +142,9 @@ crate over `matrix-rust-sdk` only if the WASM path cannot carry it.
 ### 8. Order
 
 Port and store schema with both sync models, proven by mail → Telegram → Matrix → daemon +
-Signal → XMPP → WhatsApp. Matrix comes early: official, server-archive, and its E2EE path is the
-first real test of a native addon in postbote.
+Signal → XMPP → WhatsApp. Matrix comes early: official, server-archive, and its E2EE path was
+meant as the first real test of a native addon in postbote; Matrix ended up on WASM, so Signal is
+that test.
 
 ## GUI direction (later, recorded so the data model carries it now)
 
