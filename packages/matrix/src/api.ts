@@ -61,7 +61,12 @@ export interface MatrixApi {
   listRooms(): Promise<MxRoom[]>;
   /** One page backwards from `from` (null: from the newest event). */
   messages(roomId: string, from: string | null, limit: number): Promise<MxMessagesPage>;
-  /** Stop syncing and persist the crypto store. */
+  /**
+   * One event by id, decrypted when a key is available now; null when the server no longer
+   * returns it (deleted, or the user lost access).
+   */
+  fetchEvent(roomId: string, eventId: string): Promise<MxEvent | null>;
+  /** Stop syncing and persist the crypto store. Throws when the store could not be saved. */
   close(): Promise<void>;
 }
 
@@ -74,4 +79,15 @@ export interface MatrixLoginPrompts {
   password(): Promise<string>;
   /** Progress for the user. Never carries a secret. */
   notify(message: string): void;
+}
+
+/**
+ * Which stored messages could not be decrypted, per room — so a later run can try them again once
+ * a key has arrived. Kept in the account's secret file next to the crypto store it depends on:
+ * the list only means something together with THAT store (a new device has other keys), and it
+ * holds event and room ids only, never ciphertext.
+ */
+export interface UndecryptableLedger {
+  load(): Map<string, string[]>;
+  save(ledger: ReadonlyMap<string, readonly string[]>): void;
 }

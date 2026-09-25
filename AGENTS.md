@@ -102,6 +102,15 @@ the MCP server via `run_in_background` when driving it.
   Baileys acknowledges a message BEFORE emitting it, so the receiver journals every event
   (fsync'ed, `secrets/whatsapp/<account>.journal`, 0600) before returning to Baileys, and replays
   a left-over journal first — never bypass it.
+- **Matrix is read-only through a gate, not through good intentions.** Every request of
+  matrix-js-sdk goes through `readOnlyFetch` (`packages/matrix/src/guard.ts`): GETs, login,
+  the sync filter and the E2EE key protocol pass; a `/sync` without `set_presence=offline`
+  (an omitted value means ONLINE) and everything else — receipts, typing, sends, joins — is
+  refused and fails the sync. Widen the allowlist only with a test naming the request.
+- **Matrix crypto state is saved before it is acknowledged.** The SDK's store checkpoints the
+  crypto snapshot in `setSyncData`, which the sync loop awaits before the next `/sync` — the
+  request that tells the server the to-device keys arrived. A save failure stops the run and
+  is reported; it is never swallowed.
 - **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
   settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
 - Server-side deletions: the mailbox engine sees them every flag pass; the chat engine on

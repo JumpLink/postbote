@@ -16,11 +16,17 @@
  *      and must show both messages DECRYPTED;
  *   5. Node: `alice` edits the first, redacts the second, sends a third;
  *   6. GJS again: the edit is applied, the redacted message is gone, the third is there;
+ *   7. crash: a GJS process connects and keeps syncing; `alice` sends a fourth message, whose
+ *      room key reaches bob's device in a LATER sync cycle (not the first) and is acknowledged
+ *      to the server; then the process dies without closing. A new process must decrypt it —
+ *      the per-cycle checkpoint of the crypto store is what makes that true;
+ *   8. `@bob:localhost` never appeared online: every /sync said `set_presence=offline` (the
+ *      read-only gate refuses one that does not, which would have failed a sync above);
  * and checks that neither the password nor the index leaked into the secret file's neighbours.
  * The container and every temporary file are removed at the end, pass or fail.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -262,6 +268,56 @@ try {
   );
   expect(texts.includes('Synthetic secret one, edited'), 'the edit is applied');
   expect(texts.includes('Synthetic secret three'), 'the new message arrived and decrypted');
+
+  // 7. A crash after a key-receiving sync cycle.
+  const crasher = spawn('gjsify', ['run', bundle], {
+    cwd: app,
+    env: {
+      ...process.env,
+      MATRIX_E2EE_STEP: 'crash',
+      MATRIX_E2EE_SECRETS: secrets,
+      MATRIX_E2EE_CRASH_AFTER_MS: '10000',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let crashErr = '';
+  crasher.stderr.on('data', (d) => (crashErr += d));
+  const exited = new Promise((resolve) => crasher.on('exit', (code) => resolve(code)));
+  await new Promise((resolve, reject) => {
+    let out = '';
+    crasher.stdout.on('data', (d) => {
+      out += d;
+      if (out.includes('"crash-ready"')) resolve();
+    });
+    crasher.on('exit', (code) =>
+      reject(new Error(`crash step ended early (${code}): ${crashErr.slice(-1500)}`)),
+    );
+  });
+  // A NEW room key, so the message cannot ride on a key bob's store already has: without the
+  // rotation this step passed with the checkpoint removed (measured), i.e. it proved nothing.
+  await alice.getCrypto().forceDiscardSession(roomId);
+  await alice.sendTextMessage(roomId, 'Synthetic secret four');
+  const code = await exited;
+  expect(code === 3, `the crash process died hard (exit ${code})`);
+  sync = gjs('sync');
+  expect(sync.errors === 0, `the sync after the crash had no errors (${sync.error ?? 'none'})`);
+  texts = sync.conversations[0]?.messages.map((m) => m.text) ?? [];
+  expect(
+    texts.includes('Synthetic secret four'),
+    `the key received before the crash survived it (got ${JSON.stringify(texts)})`,
+  );
+
+  // 8. Never online.
+  const presence = await json(
+    `${hs}/_matrix/client/v3/presence/${encodeURIComponent('@bob:localhost')}/status`,
+    {
+      headers: { authorization: `Bearer ${aliceLogin.access_token}` },
+    },
+  );
+  expect(
+    presence.presence !== 'online',
+    `@bob:localhost never showed as online (presence: ${presence.presence ?? presence.errcode})`,
+  );
   log('PASSED');
 } catch (err) {
   failed = true;

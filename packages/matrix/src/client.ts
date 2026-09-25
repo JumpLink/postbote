@@ -29,6 +29,7 @@ import {
 } from 'fake-indexeddb';
 import type { MatrixClient, MatrixEvent, Room, SyncState } from 'matrix-js-sdk';
 import type { MatrixApi, MxEvent, MxMessagesPage, MxRoom } from './api.ts';
+import { readOnlyFetch, ReadOnlyViolation, refusals } from './guard.ts';
 import { IndexedDbSnapshot } from './idb-snapshot.ts';
 
 export type MatrixSdk = typeof import('matrix-js-sdk');
@@ -226,12 +227,57 @@ export const connectMatrixClient: MatrixConnector = async (session) => {
     cryptoStorePrefix(session.accountId),
   );
   await snapshot.restore();
+
+  // Saves never overlap (a checkpoint may still run when `close` asks for the last one), and the
+  // first failure sticks: every later call — history, close — throws it. A crypto store that
+  // could not be written is a device that silently forgets keys; that must stop the run.
+  let saving: Promise<unknown> = Promise.resolve();
+  let saveError: Error | null = null;
+  const save = (): Promise<void> => {
+    const next = saving.then(async () => {
+      try {
+        await snapshot.save();
+      } catch (err) {
+        saveError ??= new Error(
+          `the Matrix crypto store could not be saved (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+      if (saveError) throw saveError;
+    });
+    saving = next.catch(() => {});
+    return next;
+  };
+  const refusedBefore = refusals.length;
+  const healthy = (): void => {
+    if (saveError) throw saveError;
+    const refused = refusals.slice(refusedBefore);
+    if (refused.length > 0) throw new ReadOnlyViolation(refused[0]);
+  };
+
+  /**
+   * The SDK's own store, with a checkpoint: `setSyncData` is awaited by the sync loop after a
+   * response was processed — room keys handed to the crypto — and BEFORE the next /sync, which
+   * is what acknowledges those to-device messages to the server. Saving here means no key is
+   * ever acknowledged that is not on disk; a crash at any point loses nothing the server will not
+   * deliver again.
+   */
+  class CheckpointStore extends sdk.MemoryStore {
+    override async setSyncData(
+      data: Parameters<InstanceType<MatrixSdk['MemoryStore']>['setSyncData']>[0],
+    ): Promise<void> {
+      await super.setSyncData(data);
+      await save();
+    }
+  }
+
   const client = sdk.createClient({
     baseUrl: session.homeserver,
     accessToken: session.accessToken,
     userId: session.userId,
     deviceId: session.deviceId,
     logger: quietLogger(),
+    store: new CheckpointStore(),
+    fetchFn: readOnlyFetch(globalThis.fetch.bind(globalThis)),
   });
   let running = false;
   try {
@@ -243,14 +289,25 @@ export const connectMatrixClient: MatrixConnector = async (session) => {
     if (Tracing.isAvailable()) new Tracing(LoggerLevel.Warn).turnOn();
     const synced = firstSync(sdk, client);
     running = true;
-    await client.startClient({ initialSyncLimit: 1, lazyLoadMembers: true });
+    await client.startClient({
+      initialSyncLimit: 1,
+      lazyLoadMembers: true,
+      // An omitted `set_presence` marks the user ONLINE on every /sync (client-server spec). The
+      // read-only gate refuses such a request too; this keeps it from being attempted.
+      disablePresence: true,
+    });
     await synced;
-    // Checkpoint: the room keys that sync delivered are acknowledged to the server by the NEXT
-    // /sync, which is already running — they must be on disk before anything else can fail.
-    await snapshot.save();
+    await save();
+    healthy();
   } catch (err) {
     if (running) client.stopClient();
-    await snapshot.save().catch(() => {});
+    const saved = await save().then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    if (saved && saved !== err) {
+      throw new Error(`${err instanceof Error ? err.message : String(err)}; ${saved.message}`);
+    }
     throw err;
   }
 
@@ -265,6 +322,7 @@ export const connectMatrixClient: MatrixConnector = async (session) => {
         .map((room) => toMxRoom(client, room, direct));
     },
     messages: async (roomId, from, limit): Promise<MxMessagesPage> => {
+      healthy();
       const response = await client.createMessagesRequest(roomId, from, limit, sdk.Direction.Backward);
       const events: MxEvent[] = [];
       for (const raw of response.chunk) {
@@ -287,9 +345,23 @@ export const connectMatrixClient: MatrixConnector = async (session) => {
       }
       return { events, end: response.end ?? null, displayNames };
     },
+    fetchEvent: async (roomId, eventId): Promise<MxEvent | null> => {
+      healthy();
+      let raw;
+      try {
+        raw = await client.fetchRoomEvent(roomId, eventId);
+      } catch (err) {
+        if ((err as { errcode?: string }).errcode === 'M_NOT_FOUND') return null;
+        throw err;
+      }
+      const event = mapper(raw);
+      await client.decryptEventIfNeeded(event);
+      return toMxEvent(event);
+    },
     close: async () => {
       client.stopClient();
-      await snapshot.save();
+      await save();
+      healthy();
     },
   };
 };

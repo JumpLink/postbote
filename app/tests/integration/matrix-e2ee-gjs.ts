@@ -5,6 +5,9 @@
  *
  *   login  — `postbote accounts add matrix` in code: password login, a new device, its keys
  *            uploaded, the crypto store saved into the account's secret file.
+ *   crash  — connects, prints a ready line, keeps the SDK's sync loop running for
+ *            MATRIX_E2EE_CRASH_AFTER_MS, then exits HARD without closing: whatever reaches the
+ *            crypto store in that time must already be on disk.
  *   sync   — a NEW process connects that account (crypto store restored from the file), runs
  *            `syncChats` into the index, and prints what the conversation view shows as JSON.
  *
@@ -72,10 +75,20 @@ async function sync(): Promise<void> {
   }
 }
 
+async function crash(): Promise<void> {
+  const [account] = await backend.listAccounts();
+  await backend.connect(account.id);
+  console.log(JSON.stringify({ step: 'crash-ready' }));
+  await new Promise((resolve) => setTimeout(resolve, Number(env.MATRIX_E2EE_CRASH_AFTER_MS ?? 8000)));
+  // No close(), no save: a kill.
+  process.exit(3);
+}
+
 let ok = false;
 try {
   if (step === 'login') await login();
   else if (step === 'sync') await sync();
+  else if (step === 'crash') await crash();
   else throw new Error(`unknown step ${JSON.stringify(step)}`);
   ok = true;
 } catch (err) {

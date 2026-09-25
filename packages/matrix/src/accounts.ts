@@ -8,7 +8,8 @@
  */
 
 import type { BackendAccount } from '@postbote/protocol';
-import { SecretStore, stableId } from '@postbote/store';
+import { type SecretChange, SecretStore, stableId } from '@postbote/store';
+import type { UndecryptableLedger } from './api.ts';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -100,4 +101,31 @@ export function listAccounts(secretsDir: string): BackendAccount[] {
     }
   }
   return accounts;
+}
+
+/** The account file's namespace for `UndecryptableLedger`: room id → JSON array of event ids. */
+export const UNDECRYPTABLE_NAMESPACE = 'postbote.undecryptable';
+
+/** The ledger of undecryptable messages, in the account file. One batched write per save. */
+export function secretStoreLedger(store: SecretStore): UndecryptableLedger {
+  let persisted = new Map<string, string>();
+  return {
+    load() {
+      persisted = store.load(UNDECRYPTABLE_NAMESPACE);
+      return new Map([...persisted].map(([room, json]) => [room, JSON.parse(json) as string[]]));
+    },
+    save(ledger) {
+      const now = new Map(
+        [...ledger].filter(([, ids]) => ids.length > 0).map(([room, ids]) => [room, JSON.stringify(ids)]),
+      );
+      const changes: SecretChange[] = [];
+      for (const [room, json] of now)
+        if (persisted.get(room) !== json)
+          changes.push({ namespace: UNDECRYPTABLE_NAMESPACE, key: room, value: json });
+      for (const room of persisted.keys())
+        if (!now.has(room)) changes.push({ namespace: UNDECRYPTABLE_NAMESPACE, key: room, value: null });
+      store.apply(changes);
+      persisted = now;
+    },
+  };
 }

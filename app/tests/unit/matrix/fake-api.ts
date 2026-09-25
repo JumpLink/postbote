@@ -65,6 +65,9 @@ export class FakeMatrixApi implements MatrixApi {
     [BEN, 'Ben Example'],
   ]);
   closed = 0;
+  /** What `fetchEvent` returns instead of the timeline's event: a key that arrived later. */
+  readonly decryptsNow = new Map<string, MxEvent>();
+  readonly fetched: string[] = [];
 
   addRoom(room: Partial<MxRoom> & { roomId: string }): void {
     this.rooms.set(room.roomId, {
@@ -106,6 +109,13 @@ export class FakeMatrixApi implements MatrixApi {
     return { events, end: bottom === 0 ? null : String(bottom), displayNames };
   }
 
+  async fetchEvent(roomId: string, eventId: string): Promise<MxEvent | null> {
+    this.fetched.push(eventId);
+    const replaced = this.decryptsNow.get(eventId);
+    if (replaced) return replaced;
+    return this.rooms.get(roomId)?.timeline.find((e) => e.eventId === eventId) ?? null;
+  }
+
   async close(): Promise<void> {
     this.closed++;
   }
@@ -119,4 +129,15 @@ export function fakeConnector(api: FakeMatrixApi): MatrixConnector & { sessions:
     return api;
   };
   return Object.assign(connect, { sessions });
+}
+
+/** An encrypted event this device has no key for. */
+export function undecryptable(sender: string, ts: number): MxEvent {
+  return event(
+    'm.room.encrypted',
+    sender,
+    ts,
+    { algorithm: 'm.megolm.v1.aes-sha2', ciphertext: 'synthetic' },
+    { undecryptable: 'MEGOLM_UNKNOWN_INBOUND_SESSION_ID' },
+  );
 }

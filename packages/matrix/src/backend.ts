@@ -13,7 +13,13 @@ import type {
 import { SecretStore } from '@postbote/store';
 import { existsSync } from 'node:fs';
 import type { MatrixLoginPrompts } from './api.ts';
-import { accountPath, listAccounts, readAccessToken, readAccountRecord } from './accounts.ts';
+import {
+  accountPath,
+  listAccounts,
+  readAccessToken,
+  readAccountRecord,
+  secretStoreLedger,
+} from './accounts.ts';
 import { connectMatrixClient, type MatrixConnector } from './client.ts';
 import { loginMatrix } from './login.ts';
 import { MATRIX_MANIFEST } from './manifest.ts';
@@ -73,17 +79,21 @@ export class MatrixBackend implements ChatBackend {
       );
     }
     const connected = api;
-    return new MatrixChatSession({
-      userId: connected.userId,
-      listRooms: () => connected.listRooms(),
-      messages: (roomId, from, limit) => connected.messages(roomId, from, limit),
-      close: async () => {
-        try {
-          await connected.close();
-        } finally {
-          store.close();
-        }
+    return new MatrixChatSession(
+      {
+        userId: connected.userId,
+        listRooms: () => connected.listRooms(),
+        messages: (roomId, from, limit) => connected.messages(roomId, from, limit),
+        fetchEvent: (roomId, eventId) => connected.fetchEvent(roomId, eventId),
+        close: async () => {
+          try {
+            await connected.close();
+          } finally {
+            store.close();
+          }
+        },
       },
-    });
+      secretStoreLedger(store),
+    );
   }
 }

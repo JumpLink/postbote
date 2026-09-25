@@ -30,6 +30,7 @@ import {
   writeAccessToken,
   writeAccountRecord,
 } from './accounts.ts';
+import { readOnlyFetch } from './guard.ts';
 import { connectMatrixClient, loadMatrixSdk, type MatrixConnector } from './client.ts';
 
 /** `https://matrix.example.org/` → `https://matrix.example.org`; a server name is discovered. */
@@ -52,7 +53,8 @@ export async function loginMatrix(
 ): Promise<BackendAccount> {
   const homeserver = await resolveHomeserver(await prompts.homeserver());
   const { createClient } = await loadMatrixSdk();
-  const probe = createClient({ baseUrl: homeserver });
+  const fetchFn = readOnlyFetch(globalThis.fetch.bind(globalThis));
+  const probe = createClient({ baseUrl: homeserver, fetchFn });
   const { flows } = await probe.loginFlows();
   if (!flows.some((f) => f.type === 'm.login.password')) {
     throw new Error(
@@ -103,7 +105,7 @@ export async function loginMatrix(
       }
       for (const path of [pending, `${pending}-journal`]) if (existsSync(path)) rmSync(path, { force: true });
       // The server issued a device; without its file it is an orphan in the user's session list.
-      const orphan = createClient({ baseUrl: homeserver, accessToken: login.access_token });
+      const orphan = createClient({ baseUrl: homeserver, accessToken: login.access_token, fetchFn });
       await orphan.logout(true).catch(() => {});
     }
   }

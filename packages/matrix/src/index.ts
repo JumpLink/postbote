@@ -4,6 +4,7 @@
 
 export * from './manifest.ts';
 export * from './api.ts';
+export * from './guard.ts';
 export * from './idb-snapshot.ts';
 export * from './map.ts';
 export * from './session.ts';

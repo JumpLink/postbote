@@ -23,6 +23,9 @@ import {
   MatrixBackend,
   MatrixChatSession,
   mapEvents,
+  readOnlyFetch,
+  ReadOnlyViolation,
+  refusal,
   seqOf,
   stripReplyFallback,
   toChatInfo,
@@ -32,7 +35,18 @@ import {
   writeAccountRecord,
 } from '@postbote/matrix';
 import { freshDb } from '../store/fixtures.ts';
-import { ANNA, BEN, edit, event, FakeMatrixApi, fakeConnector, ME, redaction, text } from './fake-api.ts';
+import {
+  ANNA,
+  BEN,
+  edit,
+  event,
+  FakeMatrixApi,
+  fakeConnector,
+  ME,
+  redaction,
+  text,
+  undecryptable,
+} from './fake-api.ts';
 
 /**
  * The Matrix backend without a homeserver: event mapping (edits, redactions, replies, threads,
@@ -87,6 +101,64 @@ function seedAccount(dir: string, userId = ME): string {
 }
 
 export default async () => {
+  await describe('Matrix read-only gate', async () => {
+    const HS = 'https://matrix.example.org/_matrix/client/v3';
+
+    await it('lets reads through, and /sync only with set_presence=offline', async () => {
+      expect(refusal('GET', `${HS}/rooms/!r/messages?dir=b`)).toBe(null);
+      expect(refusal('GET', `${HS}/sync?filter=1&set_presence=offline&since=s1`)).toBe(null);
+      // An omitted set_presence means online: refused.
+      expect(refusal('GET', `${HS}/sync?filter=1&since=s1`) !== null).toBe(true);
+      expect(refusal('GET', `${HS}/sync?set_presence=online`) !== null).toBe(true);
+    });
+
+    await it('allows the key protocol and login, and refuses everything people would see', async () => {
+      for (const [method, path] of [
+        ['POST', '/login'],
+        ['POST', '/logout'],
+        ['POST', '/user/%40me%3Aexample.org/filter'],
+        ['POST', '/keys/upload'],
+        ['POST', '/keys/query'],
+        ['POST', '/keys/claim'],
+        ['PUT', '/sendToDevice/m.room_key_request/t1'],
+      ]) {
+        expect(refusal(method, `${HS}${path}`)).toBe(null);
+      }
+      for (const [method, path] of [
+        ['POST', '/rooms/!r/receipt/m.read/$e'],
+        ['POST', '/rooms/!r/read_markers'],
+        ['PUT', '/rooms/!r/typing/%40me%3Aexample.org'],
+        ['PUT', '/rooms/!r/send/m.room.message/t1'],
+        ['PUT', '/rooms/!r/redact/$e/t1'],
+        ['PUT', '/presence/%40me%3Aexample.org/status'],
+        ['POST', '/join/!r'],
+        ['POST', '/rooms/!r/leave'],
+        ['PUT', '/user/%40me%3Aexample.org/account_data/m.direct'],
+        ['DELETE', '/devices/ABC'],
+      ]) {
+        expect(refusal(method, `${HS}${path}`) !== null).toBe(true);
+      }
+    });
+
+    await it('fails closed: a refused request never reaches the network', async () => {
+      const sent: string[] = [];
+      const inner = (async (input: string | URL | Request) => {
+        sent.push(String(input));
+        return new Response('{}');
+      }) as typeof fetch;
+      const guarded = readOnlyFetch(inner);
+      await guarded(`${HS}/sync?set_presence=offline`);
+      let error: unknown = null;
+      try {
+        await guarded(`${HS}/rooms/!r/receipt/m.read/$e`, { method: 'POST' });
+      } catch (err) {
+        error = err;
+      }
+      expect(error instanceof ReadOnlyViolation).toBe(true);
+      expect(sent.length).toBe(1);
+    });
+  });
+
   await describe('Matrix manifest', async () => {
     await it('is valid, server-archive, end-to-end encrypted, with no extra terms', async () => {
       expect(validateManifest(MATRIX_MANIFEST).length).toBe(0);
@@ -374,6 +446,68 @@ export default async () => {
     });
   });
 
+  await describe('IndexedDB snapshot deletions', async () => {
+    await it('deletes a removed record, a dropped object store and a deleted database', async () => {
+      const store = SecretStore.open(':memory:');
+      try {
+        const factory = new IDBFactory();
+        const db = await openDb(factory, 'postbote-b::crypto', 1, (fresh) => {
+          fresh.createObjectStore('keep');
+          fresh.createObjectStore('drop');
+        });
+        await withTx(db, ['keep', 'drop'], (tx) => {
+          tx.objectStore('keep').put('a', 'k1');
+          tx.objectStore('keep').put('b', 'k2');
+          tx.objectStore('drop').put('c', 'k3');
+        });
+        db.close();
+        (await openDb(factory, 'postbote-b::other', 1, (fresh) => fresh.createObjectStore('x'))).close();
+        const snapshot = new IndexedDbSnapshot(factory, store, 'postbote-b');
+        await snapshot.save();
+        const keys = () =>
+          [...store.loadAll()]
+            .filter(([ns]) => ns.startsWith('idb'))
+            .flatMap(([ns, map]) => [...map.keys()].map((k) => `${ns}|${k}`))
+            .sort()
+            .join(' ');
+        expect(keys().includes('idb:postbote-b::other/x')).toBe(false);
+
+        // A removed record.
+        const again = await openDb(factory, 'postbote-b::crypto');
+        await withTx(again, ['keep'], (tx) => {
+          tx.objectStore('keep').delete('k2');
+        });
+        again.close();
+        expect(await snapshot.save()).toBe(1);
+        expect(keys().includes('"k2"')).toBe(false);
+        expect(keys().includes('"k1"')).toBe(true);
+
+        // A dropped object store: its records and its place in the schema go.
+        (await openDb(factory, 'postbote-b::crypto', 2, (up) => up.deleteObjectStore('drop'))).close();
+        expect((await snapshot.save()) >= 2).toBe(true);
+        expect(keys().includes('idb:postbote-b::crypto/drop')).toBe(false);
+
+        // A deleted database: everything of it goes, the other stays.
+        (await openDb(factory, 'postbote-b::other')).close();
+        await new Promise<void>((resolve, reject) => {
+          const request = factory.deleteDatabase('postbote-b::crypto');
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+        await snapshot.save();
+        expect(keys().includes('postbote-b::crypto')).toBe(false);
+        expect(keys().includes('idb.schema|postbote-b::other')).toBe(true);
+
+        // And a restore into a fresh factory brings back exactly what is left.
+        const fresh = new IDBFactory();
+        expect(await new IndexedDbSnapshot(fresh, store, 'postbote-b').restore()).toBe(1);
+        expect((await fresh.databases()).map((d) => d.name).join()).toBe('postbote-b::other');
+      } finally {
+        store.close();
+      }
+    });
+  });
+
   await describe('Matrix backend', async () => {
     await it('lists the accounts it has files for, by user id', async () => {
       const dir = tempDir();
@@ -457,6 +591,53 @@ export default async () => {
         expect(bodies.join('|')).toBe('Ja|Treffen um 6|Bis dann');
         expect(view?.messages[1].editedAt).toBe(new Date(at(20)).toISOString());
         expect(existsSync(join(dir, `${accountId}.db`))).toBe(true);
+      } finally {
+        db.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('retries undecryptable messages on later runs, also in chats with nothing new', async () => {
+      const dir = tempDir();
+      const db = freshDb();
+      try {
+        const accountId = seedAccount(dir);
+        const api = new FakeMatrixApi();
+        api.addRoom({ roomId: '!e:example.org', name: 'Encrypted', direct: false });
+        const locked = undecryptable(ANNA, at(1));
+        const lockedEdit = undecryptable(ANNA, at(3));
+        const target = text(ANNA, at(2), 'alt');
+        const hopeless = undecryptable(BEN, at(4));
+        api.post('!e:example.org', locked, target, lockedEdit, hopeless);
+        const backend = new MatrixBackend({ settings: {}, env: {}, secretsDir: dir }, fakeConnector(api));
+        const id = chatConversationId('matrix', accountId, '!e:example.org');
+        const bodies = () =>
+          (getConversation(db, id, { includeBodies: true })?.messages ?? []).map((m) => m.bodyText).join('|');
+
+        await syncChats(db, backend);
+        expect(bodies()).toBe(`${UNDECRYPTABLE_TEXT}|alt|${UNDECRYPTABLE_TEXT}|${UNDECRYPTABLE_TEXT}`);
+        // Nothing is retried in the run that stored them.
+        expect(api.fetched.length).toBe(0);
+
+        // The keys for two of them arrive; the room itself has nothing new.
+        api.decryptsNow.set(locked.eventId, {
+          ...text(ANNA, locked.ts, 'jetzt lesbar'),
+          eventId: locked.eventId,
+        });
+        api.decryptsNow.set(lockedEdit.eventId, {
+          ...edit(ANNA, lockedEdit.ts, target.eventId, 'neu'),
+          eventId: lockedEdit.eventId,
+        });
+        const second = await syncChats(db, backend);
+        expect(second.errors).toBe(0);
+        expect(api.fetched.length).toBe(3);
+        // The message decrypts in place; the edit replaces its placeholder and lands on its target.
+        expect(bodies()).toBe(`jetzt lesbar|neu|${UNDECRYPTABLE_TEXT}`);
+
+        // Only the one still locked is tried again.
+        api.fetched.length = 0;
+        await syncChats(db, backend);
+        expect(api.fetched.join()).toBe(hopeless.eventId);
       } finally {
         db.close();
         rmSync(dir, { recursive: true, force: true });

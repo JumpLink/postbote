@@ -279,7 +279,15 @@ every message sent **after** the login: senders encrypt for the new device from
 then on, and its keys arrive with each sync. Messages sent **before** it show as
 `[encrypted message: this device has no key for it]`: reading them needs your
 server-side key backup or a verified session sharing its keys, and neither is
-built yet.
+built yet. Postbote remembers such placeholders and tries them again on every
+sync, so a key that arrives later still turns them into text.
+
+Postbote never shows you as online (every sync says `set_presence=offline`) and
+never sends a read receipt, a typing notice or a message: a read-only gate
+refuses every request outside login, the sync filter and the encryption key
+exchange before it leaves the machine. The device's crypto store is saved after
+every sync step, before the server is told the keys arrived, so even a crash
+loses no key.
 
 The first sync takes the newest 200 messages of every joined room, later syncs
 walk forward. Edits and redactions arrive as events of their own and are applied
