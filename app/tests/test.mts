@@ -27,6 +27,7 @@ import storeClassify from './unit/store/classify.test.ts';
 import storeThreads from './unit/store/threads.test.ts';
 import storeConversations from './unit/store/conversations.test.ts';
 import storeChatSync from './unit/store/chat-sync.test.ts';
+import storeDeliverySync from './unit/store/delivery-sync.test.ts';
 
 import telegram from './unit/telegram/telegram.test.ts';
 
@@ -60,6 +61,7 @@ run({
   storeThreads,
   storeConversations,
   storeChatSync,
+  storeDeliverySync,
   telegram,
   date,
   limits,
