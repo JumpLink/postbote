@@ -35,6 +35,10 @@ is built on, which is where this is headed.
 - **XMPP / Jabber** (optional, off by default) — direct chats with your roster
   and the rooms you joined, read from the server's message archive (MAM) through
   [xmpp.js](https://github.com/xmppjs/xmpp.js). See [XMPP](#xmpp).
+- **Matrix** (optional, off by default) — the rooms you have joined, end-to-end
+  encrypted ones included, through
+  [matrix-js-sdk](https://github.com/matrix-org/matrix-js-sdk) and its Rust
+  crypto compiled to WebAssembly. See [Matrix](#matrix).
 
 Everything is **read-only**. Messages are fetched with IMAP `BODY.PEEK`, so
 opening a mail through Postbote never marks it as read. Telegram is read the
@@ -42,7 +46,8 @@ same way: nothing is sent, edited, deleted or marked read. WhatsApp too: no
 message, no read receipt, no online presence (see [WhatsApp](#whatsapp) for the
 one acknowledgement every linked device sends). XMPP likewise — Postbote never
 sends a presence, so contacts do not see it online and your offline messages
-stay queued for your real clients.
+stay queued for your real clients. Matrix too: no presence, no read
+receipt, no typing notice, no message, and no invitation is accepted.
 
 ## Requirements
 
@@ -252,6 +257,42 @@ Corrections (XEP-0308) replace the stored text, retractions (XEP-0424/0425)
 remove the message. OMEMO-encrypted messages are indexed without their text:
 Postbote cannot decrypt them yet.
 
+## Matrix
+
+Matrix is an open protocol, so there are no terms beyond your homeserver's own.
+Log in with your homeserver, user and password:
+
+```bash
+postbote backends enable matrix
+postbote accounts add matrix       # homeserver URL or server name, user, password
+postbote sync
+```
+
+The login creates a **new device** named `postbote` (it appears in your
+session list in Element and every other client) and uploads its encryption
+keys. Only password login is supported: a homeserver that offers single
+sign-on alone — matrix.org, since its move to the Matrix Authentication
+Service — is refused with that reason for now.
+
+Encrypted rooms are decrypted where this device holds the room key. That is
+every message sent **after** the login: senders encrypt for the new device from
+then on, and its keys arrive with each sync. Messages sent **before** it show as
+`[encrypted message: this device has no key for it]`: reading them needs your
+server-side key backup or a verified session sharing its keys, and neither is
+built yet.
+
+The first sync takes the newest 200 messages of every joined room, later syncs
+walk forward. Edits and redactions arrive as events of their own and are applied
+on the next sync — a message redacted on the server is removed from the index
+without a full scan. Rooms you are only invited to are left alone.
+
+The login leaves an **account file** at
+`$XDG_DATA_HOME/postbote/secrets/matrix/matrix-<hash>.db` (mode `0600`). It holds
+the access token and the device's crypto store (its identity keys and every room
+key it received): back it up like a password. Losing it means a new login, a new
+device, and no key for anything sent before it. To end the session, sign the
+`postbote` device out in another client and delete the file.
+
 ## As an MCP server
 
 `postbote mcp` speaks MCP over stdio. Registered in an MCP client it exposes
@@ -279,14 +320,16 @@ live in `$XDG_CONFIG_HOME/postbote/config.json` (mode `0600`, override with
 `POSTBOTE_CONFIG`). Unlike the index they cannot be rebuilt from a server, so
 back that file up.
 
-Chat sessions (Telegram, WhatsApp) and chat passwords (XMPP) are **secrets**,
-kept apart from the index under `$XDG_DATA_HOME/postbote/secrets/` — no command
-or MCP tool ever returns one. The index can be rebuilt from the servers **unless
-WhatsApp is enabled**: WhatsApp keeps no archive, so its messages in the index
-are the only copy (`postbote backends list` shows this as `storeTier: state`).
+Chat sessions (Telegram, WhatsApp, Matrix — including Matrix's crypto store) and
+chat passwords (XMPP) are **secrets**, kept apart from the index under
+`$XDG_DATA_HOME/postbote/secrets/` — no command or MCP tool ever returns one.
+The index can be rebuilt from the servers **unless WhatsApp is enabled**:
+WhatsApp keeps no archive, so its messages in the index are the only copy
+(`postbote backends list` shows this as `storeTier: state`).
 
 Nothing is sent anywhere. Postbote talks to your mail server — and to Telegram,
-WhatsApp or your XMPP server if you enabled them — and to nothing else.
+WhatsApp, your XMPP server or your Matrix homeserver if you enabled them — and
+to nothing else.
 
 ## Development
 

@@ -23,7 +23,8 @@
     "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs",
     "test:telegram-network": "gjsify build tests/integration/telegram-handshake.ts --app gjs --outfile dist/telegram-handshake.gjs.mjs && gjsify run dist/telegram-handshake.gjs.mjs",
     "test:whatsapp-network": "gjsify build tests/integration/whatsapp-qr.ts --app gjs --external jimp,sharp --outfile dist/whatsapp-qr.gjs.mjs && gjsify run dist/whatsapp-qr.gjs.mjs",
-    "test:xmpp-server": "node tests/integration/xmpp-archive.mjs"
+    "test:xmpp-server": "node tests/integration/xmpp-archive.mjs",
+    "test:matrix-e2ee": "gjsify build tests/integration/matrix-e2ee-gjs.ts --app gjs --outfile dist/matrix-e2ee.gjs.mjs && node tests/integration/matrix-e2ee.mjs"
   },
   "gjsify": {
     "excludeGlobals": [
@@ -38,7 +39,13 @@
       "matchMedia",
       "MutationObserver",
       "ResizeObserver",
-      "IntersectionObserver"
+      "IntersectionObserver",
+      "AudioContext",
+      "RTCPeerConnection",
+      "MediaStream",
+      "RTCSessionDescription",
+      "RTCIceCandidate",
+      "MediaStreamTrack"
     ],
     "test": {
       "entry": "tests/test.mts",
@@ -53,6 +60,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@postbote/gnome": "*",
     "@postbote/imap": "*",
+    "@postbote/matrix": "*",
     "@postbote/protocol": "*",
     "@postbote/store": "*",
     "@postbote/telegram": "*",
@@ -73,6 +81,7 @@
     "@types/yargs": "^17.0.35",
     "baileys": "7.0.0-rc14",
     "@xmpp/client": "0.14.0",
+    "fake-indexeddb": "6.2.5",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
     "typescript": "^6.0.3"

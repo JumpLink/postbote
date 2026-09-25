@@ -1,0 +1,25 @@
+{
+  "name": "@postbote/matrix",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "Matrix backend: the chat sync driver over matrix-js-sdk with its Rust crypto compiled to WebAssembly, the crypto store on postbote's SecretStore, and the password login. Read-only.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.9.0",
+    "@postbote/protocol": "*",
+    "@postbote/store": "*",
+    "fake-indexeddb": "6.2.5",
+    "loglevel": "1.9.2",
+    "matrix-js-sdk": "42.4.0"
+  }
+}

@@ -32,6 +32,7 @@ import storeDeliverySync from './unit/store/delivery-sync.test.ts';
 import telegram from './unit/telegram/telegram.test.ts';
 import whatsapp from './unit/whatsapp/whatsapp.test.ts';
 import xmpp from './unit/xmpp/xmpp.test.ts';
+import matrix from './unit/matrix/matrix.test.ts';
 
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
@@ -67,6 +68,7 @@ run({
   telegram,
   whatsapp,
   xmpp,
+  matrix,
   date,
   limits,
   registry,
