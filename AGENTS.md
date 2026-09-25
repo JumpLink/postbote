@@ -31,9 +31,10 @@ SMTP, no flag write, no move, no delete.
 | `@postbote/store` | SQLite index, sync engines (mailbox + chat), conversations (threading, classification), secret store, XDG paths, file writes | `protocol`, `node:*` |
 | `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
 | `@postbote/whatsapp` | WhatsApp `delivery` backend on Baileys (unofficial protocol: WebSocket, WASM, libsignal), its auth state on `SecretStore`, the QR / pairing-code link | `protocol`, `store`, `baileys`, `node:*` — no `gi://` |
+| `@postbote/xmpp` | XMPP `chat` backend on xmpp.js (composed by hand: domain-checked direct TLS, WebSocket, SCRAM), history from MAM only, the account file on `SecretStore`, the login. NEVER sends presence, markers or messages | `protocol`, `store`, `@xmpp/*`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
-**`store` must never import a backend** (`imap`, `telegram`, …). The sync engines are driven
+**`store` must never import a backend** (`imap`, `telegram`, `xmpp`, …). The sync engines are driven
 through the driver ports declared in `protocol` (`MailBackend`, `ChatBackend`) and injected by
 `app`. That keeps `store` free of `gi://` and of any network library even transitively, which
 is the only reason the sync algorithms — the most intricate part of this project — can be
@@ -87,6 +88,8 @@ the MCP server via `run_in_background` when driving it.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
 - Chat sessions (Telegram's auth key and the api_id/api_hash it was created with; WhatsApp's
   Signal keys and device credentials) are the one secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
+- Chat sessions (Telegram's auth key, and the api_id/api_hash it was created with) and XMPP
+  passwords are the secrets postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
   (created 0600 in 0700), through `SecretStore` — never in the index, never logged, never in a
   DTO or MCP output. Its backup tier is `secret`; the index stays `derived`.
 - **Delivery-only messages are `state`, not cache.** WhatsApp keeps no server archive: a

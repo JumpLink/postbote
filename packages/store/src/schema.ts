@@ -21,7 +21,7 @@
 
 import { type IndexDatabase, withTransaction } from './db.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * The FTS5 DDL. Defined once so the baseline and any future rebuild cannot drift.
@@ -261,6 +261,9 @@ const UPGRADES: Record<number, readonly UpgradeStep[]> = {
     { table: 'conversation_messages', column: 'peer_read', type: 'INTEGER' },
     `CREATE INDEX IF NOT EXISTS conversation_messages_seq ON conversation_messages (conversation_id, remote_seq)`,
   ],
+  // v4: the archive's own id of the newest synced entry, for networks that page by id (XMPP
+  // MAM) — the number in `last_seq` orders messages but cannot resume such an archive.
+  4: [{ table: 'chat_cursors', column: 'last_cursor', type: 'TEXT' }],
 };
 
 function columnsOf(db: IndexDatabase, table: string): Set<string> {

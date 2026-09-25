@@ -379,6 +379,23 @@ export default async () => {
       store.close();
     });
 
+    await it('discard drops a pending write and its timer, so nothing fires into a closed store', async () => {
+      const store = SecretStore.open(':memory:');
+      const clock = new ManualClock();
+      // A file without creds: open() marks fresh creds dirty and arms the write-behind timer.
+      const auth = SecretStoreAuthState.open(store, {
+        flushDelayMs: 500,
+        setTimer: clock.set,
+        clearTimer: clock.clear,
+      });
+      expect(clock.pending()).toBe(1);
+      auth.discard();
+      expect(clock.pending()).toBe(0);
+      store.close();
+      clock.advance(1000);
+      expect(auth.writes).toBe(0);
+    });
+
     await it('the Signal curve agrees on a shared secret, whichever path libsignal takes (gjsify#1834)', async () => {
       const a = Curve.generateKeyPair();
       const b = Curve.generateKeyPair();

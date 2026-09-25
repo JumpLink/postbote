@@ -118,3 +118,12 @@ export function insertMany(
     db.prepare(`${head} VALUES ${chunk.map(() => tuple).join(', ')}`).run(...chunk.flat());
   }
 }
+
+/**
+ * A sequence column as a SELECT expression that survives any size.
+ *
+ * gjsify gap (unfixed, gjsify#1839): libgda types a declared INTEGER column as a 32-bit int, and
+ * one value above 2^31-1 — any millisecond timestamp, which is what XMPP's archive order is —
+ * makes the WHOLE result come back empty. As text it reads fine; `num()` converts it back.
+ */
+export const seqColumn = (column: string): string => `${column} || '' AS ${column.replace(/^.*\./, '')}`;

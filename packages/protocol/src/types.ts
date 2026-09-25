@@ -48,6 +48,8 @@ export interface ContactDTO {
   org: string | null;
   emails: string[];
   phones: string[];
+  /** XMPP addresses (vCard `IMPP:xmpp:` / `X-JABBER`), as written — absent when none. */
+  jids?: string[];
 }
 
 /** A calendar event projected from an EDS calendar (iCalendar). */

@@ -149,6 +149,20 @@ export class SecretStoreAuthState {
     }, this.flushDelayMs);
   }
 
+  /**
+   * Drop what is pending WITHOUT writing it, and cancel the write-behind timer — for a state
+   * that is being thrown away with its file (a session refused as never linked). Without this
+   * the timer outlives the closed store and fires into it.
+   */
+  discard(): void {
+    if (this.timer !== null) {
+      this.clearTimer(this.timer);
+      this.timer = null;
+    }
+    this.credsDirty = false;
+    this.dirty.clear();
+  }
+
   /** Write every dirty key in one transaction. */
   flush(): void {
     if (this.timer !== null) {

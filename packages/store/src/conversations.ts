@@ -25,7 +25,7 @@ import type {
 import { normalizeAddress } from '@postbote/protocol';
 import { classifyMail, conversationVerdict, type MessageVerdict, type SenderOverrides } from './classify.ts';
 import type { IndexDatabase } from './db.ts';
-import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
+import { insertMany, placeholders, seqColumn, type SqlValue, withTransaction } from './db.ts';
 import { messageBody } from './index-store.ts';
 import { buildThreads, normalizeSubject, stableId, type ThreadMember } from './threads.ts';
 
@@ -136,6 +136,7 @@ class ParticipantDirectory {
       };
       for (const email of contact.emails) claim('email', email);
       for (const phone of contact.phones) claim('phone', phone);
+      for (const jid of contact.jids ?? []) claim('jid', jid);
       if (owned.length > 0) this.addresses.set(id, owned);
     }
   }
@@ -168,7 +169,13 @@ class ParticipantDirectory {
    */
   resolvePeer(scope: string, peerId: string, name: string | null, addresses: ParticipantAddress[]): string {
     const owners = addresses
-      .map((a) => this.byAddress.get(`${a.kind}:${a.value}`))
+      .flatMap((a) => [
+        this.byAddress.get(`${a.kind}:${a.value}`),
+        // A JID that is letter for letter a contact's mail address is that contact: most
+        // people's XMPP and mail accounts share the provider. Only a CONTACT's address counts —
+        // someone who merely mailed from it is no proof.
+        a.kind === 'jid' ? this.contactOwner(`email:${a.value}`) : undefined,
+      ])
       .filter((e): e is DirectoryEntry => e !== undefined);
     let entry = owners.find((e) => e.contactUid !== null) ?? owners[0];
     if (!entry) {
@@ -191,6 +198,11 @@ class ParticipantDirectory {
       this.addresses.set(entry.id, owned);
     }
     return entry.id;
+  }
+
+  private contactOwner(key: string): DirectoryEntry | undefined {
+    const entry = this.byAddress.get(key);
+    return entry?.contactUid ? entry : undefined;
   }
 
   participants(): DirectoryEntry[] {
@@ -666,9 +678,10 @@ export function getConversation(
     .prepare(
       `SELECT id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
               sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
-              classification, classification_reason, folder_path, uid, remote_id, remote_seq, body,
+              classification, classification_reason, folder_path, uid, remote_id, ${seqColumn('remote_seq')}, body,
               edited_at, reply_to_remote_id, thread_remote_id, peer_read
-         FROM conversation_messages WHERE conversation_id = ? ORDER BY sent_at, remote_seq, id`,
+         FROM conversation_messages WHERE conversation_id = ?
+        ORDER BY sent_at, conversation_messages.remote_seq, id`,
     )
     .all(id) as Array<Record<string, unknown>>;
 

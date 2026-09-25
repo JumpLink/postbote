@@ -47,6 +47,7 @@ function mapContact(contact: EBookContacts.Contact): ContactDTO {
   let uid = '';
   const emails: string[] = [];
   const phones: string[] = [];
+  const jids: string[] = [];
   for (const attr of contact.get_attributes()) {
     switch (attr.get_name().toUpperCase()) {
       case 'FN':
@@ -65,12 +66,23 @@ function mapContact(contact: EBookContacts.Contact): ContactDTO {
         if (v) phones.push(v);
         break;
       }
+      // Evolution writes X-JABBER; vCard 4 and most CardDAV servers write IMPP with a scheme.
+      case 'X-JABBER': {
+        const v = attrValue(attr);
+        if (v) jids.push(v);
+        break;
+      }
+      case 'IMPP': {
+        const v = attrValue(attr);
+        if (v && /^xmpp:/i.test(v)) jids.push(v);
+        break;
+      }
       case 'UID':
         uid = attrValue(attr) ?? uid;
         break;
     }
   }
-  return { uid, name, org, emails, phones };
+  return { uid, name, org, emails, phones, ...(jids.length > 0 ? { jids } : {}) };
 }
 
 /**
