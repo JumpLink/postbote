@@ -142,8 +142,8 @@ const STATEMENTS: readonly string[] = [
      participant_id TEXT NOT NULL,
      PRIMARY KEY (conversation_id, participant_id))`,
 
-  // `folder_path` + `uid` locate a mail message for `mail_get_message`; a chat backend leaves
-  // them null and will add its own locator column.
+  // `folder_path` + `uid` locate a mail message for `mail_get_message`; every other backend
+  // leaves them null and stores the network's own message id in `remote_id`.
   `CREATE TABLE IF NOT EXISTS conversation_messages (
      id TEXT PRIMARY KEY,
      conversation_id TEXT NOT NULL,
@@ -162,7 +162,8 @@ const STATEMENTS: readonly string[] = [
      classification TEXT NOT NULL,
      classification_reason TEXT NOT NULL,
      folder_path TEXT,
-     uid INTEGER)`,
+     uid INTEGER,
+     remote_id TEXT)`,
 
   `CREATE INDEX IF NOT EXISTS conversation_messages_conv ON conversation_messages (conversation_id, sent_at)`,
 ];

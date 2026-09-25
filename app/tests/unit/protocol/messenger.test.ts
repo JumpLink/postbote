@@ -50,6 +50,29 @@ export default async () => {
       expect(normalizeAddress('matrix', 'anna:example.org')).toBe(null);
     });
 
+    await it('keeps a national phone number national — it does not merge with E.164', async () => {
+      expect(normalizeAddress('phone', '0151 2345678')).toBe('01512345678');
+    });
+
+    await it('accepts a Signal ACI UUID or username, lower-cased', async () => {
+      expect(normalizeAddress('signal', 'ACI:0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9')).toBe(
+        '0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9',
+      );
+      expect(normalizeAddress('signal', 'Anna_E.42')).toBe('anna_e.42');
+      expect(normalizeAddress('signal', 'anna')).toBe(null);
+      expect(normalizeAddress('signal', '+491512345678')).toBe(null);
+    });
+
+    await it('maps WhatsApp numbers and JIDs to one form, keeping LIDs apart', async () => {
+      expect(normalizeAddress('whatsapp', '+491512345678')).toBe('491512345678@s.whatsapp.net');
+      expect(normalizeAddress('whatsapp', '491512345678:3@s.whatsapp.net')).toBe(
+        '491512345678@s.whatsapp.net',
+      );
+      expect(normalizeAddress('whatsapp', '491512345678@c.us')).toBe('491512345678@s.whatsapp.net');
+      expect(normalizeAddress('whatsapp', '123456789012345@LID')).toBe('123456789012345@lid');
+      expect(normalizeAddress('whatsapp', 'anna@example.org')).toBe(null);
+    });
+
     await it('reduces a JID to its bare form — the resource is a device, not the person', async () => {
       expect(normalizeAddress('jid', 'Anna@Example.org/phone')).toBe('anna@example.org');
       expect(normalizeAddress('jid', 'xmpp:anna@example.org')).toBe('anna@example.org');

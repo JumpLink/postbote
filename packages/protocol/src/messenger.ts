@@ -63,9 +63,17 @@ export const CAPABILITY_NAMES: ReadonlyArray<keyof BackendCapabilities> = [
 ];
 
 /** The kinds of address a participant can be reached at. */
-export type AddressKind = 'email' | 'phone' | 'telegram' | 'matrix' | 'jid';
+export type AddressKind = 'email' | 'phone' | 'telegram' | 'matrix' | 'jid' | 'signal' | 'whatsapp';
 
-export const ADDRESS_KINDS: readonly AddressKind[] = ['email', 'phone', 'telegram', 'matrix', 'jid'];
+export const ADDRESS_KINDS: readonly AddressKind[] = [
+  'email',
+  'phone',
+  'telegram',
+  'matrix',
+  'jid',
+  'signal',
+  'whatsapp',
+];
 
 /** One typed address. `value` is always in the canonical form `normalizeAddress` produces. */
 export interface ParticipantAddress {
@@ -95,6 +103,8 @@ export function normalizeAddress(kind: AddressKind, raw: string): string | null 
       return bare.toLowerCase();
     }
     case 'phone': {
+      // A number without country code stays national: `0151 …` does not merge with the E.164
+      // `+49151 …` form, because which country it belongs to is not known here.
       const digits = value.replace(/^tel:/i, '').replace(/[\s\-./()]/g, '');
       const international = digits.startsWith('00') ? `+${digits.slice(2)}` : digits;
       return /^\+?\d{3,}$/.test(international) ? international : null;
@@ -111,6 +121,23 @@ export function normalizeAddress(kind: AddressKind, raw: string): string | null 
       // is lowercase by spec for every user id issued since v1.
       const m = /^@([^:\s]+):(\S+)$/.exec(value);
       return m ? `@${m[1].toLowerCase()}:${m[2].toLowerCase()}` : null;
+    }
+    case 'signal': {
+      // A Signal identity beyond the phone number (a phone number is kind `phone`): the ACI
+      // UUID, or a username `nickname.NN` (3–32 of [a-z0-9_], a dot, 2+ digits), both
+      // case-insensitive.
+      const id = value.replace(/^(aci|signal):/i, '');
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return id.toLowerCase();
+      return /^[a-z_][a-z0-9_]{2,31}\.\d{2,}$/i.test(id) ? id.toLowerCase() : null;
+    }
+    case 'whatsapp': {
+      // A WhatsApp user JID: `<digits>@s.whatsapp.net` (phone-based) or `<digits>@lid` (the
+      // privacy id that hides the number). The device suffix (`:3`) names a device, not the
+      // person, and bare digits are read as the phone form.
+      const m = /^\+?(\d{5,})(?::\d+)?(?:@(s\.whatsapp\.net|c\.us|lid))?$/i.exec(value);
+      if (!m) return null;
+      const server = m[2]?.toLowerCase() === 'lid' ? 'lid' : 's.whatsapp.net';
+      return `${m[1]}@${server}`;
     }
     case 'jid': {
       // A participant is a bare JID; the resource names one of their devices, not them.
@@ -180,12 +207,17 @@ export interface Conversation {
 
 /**
  * Where a message lives in its backend, so a caller can fetch it in full through the
- * backend-specific tool (for mail: `mail_get_message` with account, folder and uid).
+ * backend-specific tool. Mail uses `folder` + `uid` (what `mail_get_message` takes); every
+ * other backend uses `remoteId`, the network's own opaque message id.
  */
 export interface MessageRef {
   accountId: string;
+  /** Mail only: the mailbox the message is in. */
   folder?: string;
+  /** Mail only: its IMAP UID within `folder`. */
   uid?: number;
+  /** Every non-mail backend: the network's message id, opaque to postbote. */
+  remoteId?: string;
 }
 
 /** One message inside a conversation. No body unless the caller asked for one. */

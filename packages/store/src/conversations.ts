@@ -545,7 +545,7 @@ export function getConversation(
     .prepare(
       `SELECT id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
               sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
-              classification, classification_reason, folder_path, uid
+              classification, classification_reason, folder_path, uid, remote_id
          FROM conversation_messages WHERE conversation_id = ? ORDER BY sent_at, id`,
     )
     .all(id) as Array<Record<string, unknown>>;
@@ -577,6 +577,7 @@ export function getConversation(
         accountId: String(r.account_id),
         ...(folder ? { folder } : {}),
         ...(uid !== undefined ? { uid } : {}),
+        ...(r.remote_id ? { remoteId: String(r.remote_id) } : {}),
       },
     };
     if (options.includeBodies) {

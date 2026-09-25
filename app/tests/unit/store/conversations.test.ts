@@ -289,6 +289,8 @@ export default async () => {
         expect(second.senderId).toBe(null);
         expect(first.ref.folder).toBe('INBOX');
         expect(first.ref.uid).toBe(1);
+        // Mail is located by folder + uid; remoteId is for the other backends.
+        expect(first.ref.remoteId).toBe(undefined);
       } finally {
         db.close();
       }
