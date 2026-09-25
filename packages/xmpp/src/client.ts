@@ -40,7 +40,7 @@ import {
   type DiscoveryDeps,
   discoverEndpoints,
   type Endpoint,
-  isLoopback,
+  chooseMechanism,
   parseService,
   TLS_SOCKET_GAP,
   usableEndpoints,
@@ -292,20 +292,7 @@ async function connectEndpoint(
     // A WebSocket to localhost counts as "secure" to xmpp.js; it is not encrypted, so decide
     // from the scheme.
     const encrypted = endpoint.kind === 'websocket' ? endpoint.uri.startsWith('wss:') : e.isSecure();
-    if (!encrypted && !isLoopback(endpoint.host)) {
-      throw new Error(`refusing to log in over an unencrypted connection to ${endpoint.host}`);
-    }
-    // SCRAM never sends the password; PLAIN does, so only inside TLS.
-    const mechanism = mechanisms.includes('SCRAM-SHA-1')
-      ? 'SCRAM-SHA-1'
-      : encrypted && mechanisms.includes('PLAIN')
-        ? 'PLAIN'
-        : null;
-    if (!mechanism) {
-      throw new Error(
-        `the server offers no login mechanism postbote uses on this connection (offered: ${mechanisms.join(', ') || 'none'})`,
-      );
-    }
+    const mechanism = chooseMechanism(mechanisms, { encrypted, host: endpoint.host });
     await authenticate({ username: local, password: options.login.password }, mechanism);
   });
   resourceBinding(

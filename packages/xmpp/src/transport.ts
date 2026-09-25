@@ -139,6 +139,29 @@ export async function discoverEndpoints(domain: string, deps: DiscoveryDeps): Pr
 }
 
 /**
+ * The SASL mechanism for a login, or an error that says why there is none — the downgrade
+ * defence in one pure function. No login at all over an unencrypted stream off loopback.
+ * SCRAM never sends the password; PLAIN does, so only inside TLS.
+ *
+ * SCRAM-SHA-1 is the strongest SCRAM xmpp.js 0.14 ships (no SCRAM-SHA-256 package, and
+ * `sasl-ht-sha-256-none` is FAST token auth, not a password mechanism); SHA-256 would slot in
+ * first here once it exists. No channel binding (-PLUS) yet.
+ */
+export function chooseMechanism(
+  offered: readonly string[],
+  connection: { encrypted: boolean; host: string },
+): 'SCRAM-SHA-1' | 'PLAIN' {
+  if (!connection.encrypted && !isLoopback(connection.host)) {
+    throw new Error(`refusing to log in over an unencrypted connection to ${connection.host}`);
+  }
+  if (offered.includes('SCRAM-SHA-1')) return 'SCRAM-SHA-1';
+  if (connection.encrypted && offered.includes('PLAIN')) return 'PLAIN';
+  throw new Error(
+    `the server offers no login mechanism postbote uses on this connection (offered: ${offered.join(', ') || 'none'})`,
+  );
+}
+
+/**
  * gjsify gap (unfixed, gjsify#1837): on 0.49.0 no raw TLS socket works — `tls.connect()` fails
  * its handshake with G_IO_ERROR_PENDING (the plain socket's own read is still in flight on the
  * stream TLS wants), measured against a local Prosody and a public HTTPS host alike, and

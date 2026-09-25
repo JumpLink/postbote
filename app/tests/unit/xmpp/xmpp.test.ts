@@ -30,6 +30,10 @@ import {
   parseService,
   unresolvedReferences,
   usableEndpoints,
+  chooseMechanism,
+  decodeCursor,
+  encodeCursor,
+  RESUME_MARGIN_MS,
   windowEntries,
   websocketLinks,
   XMPP_MANIFEST,
@@ -312,7 +316,7 @@ export default async () => {
       expect(secret.text).toBe(null);
       // The marker is an archive entry, not a message — but the page covers it.
       expect(page.highestSeq).toBe(Date.parse(at(5)));
-      expect(page.highestCursor).toBe('a5');
+      expect(page.highestCursor).toBe(`${Date.parse(at(5))}|a5`);
     });
 
     await it('applies a correction and a retraction inside the page, only from the author', async () => {
@@ -499,6 +503,26 @@ export default async () => {
     });
   });
 
+  await describe('XMPP login mechanism', async () => {
+    await it('prefers SCRAM, allows PLAIN only inside TLS, and refuses cleartext off loopback', async () => {
+      const tls = { encrypted: true, host: 'xmpp.example.org' };
+      const plainNet = { encrypted: false, host: 'xmpp.example.org' };
+      const loop = { encrypted: false, host: '127.0.0.1' };
+      expect(chooseMechanism(['PLAIN', 'SCRAM-SHA-1'], tls)).toBe('SCRAM-SHA-1');
+      expect(chooseMechanism(['PLAIN'], tls)).toBe('PLAIN');
+      expect(chooseMechanism(['SCRAM-SHA-1', 'PLAIN'], loop)).toBe('SCRAM-SHA-1');
+      // A downgrade to PLAIN on an unencrypted stream: refused, even on loopback.
+      expect(
+        (await rejects(async () => chooseMechanism(['PLAIN'], loop))).includes('no login mechanism'),
+      ).toBe(true);
+      // No login at all over cleartext to a real host, whatever is offered.
+      expect(
+        (await rejects(async () => chooseMechanism(['SCRAM-SHA-1'], plainNet))).includes('refusing'),
+      ).toBe(true);
+      expect((await rejects(async () => chooseMechanism([], tls))).includes('offered: none')).toBe(true);
+    });
+  });
+
   await describe('XmppChatSession', async () => {
     await it('lists roster contacts and joined rooms, newest first, rooms without archive included', async () => {
       const server = fakeServer({
@@ -522,7 +546,8 @@ export default async () => {
       const session = new XmppChatSession(fakeApi(server));
       const chats = await session.listChats();
       expect(chats.map((c) => `${c.remoteId}:${c.kind}:${c.lastCursor}`).join()).toBe(
-        `${BEN}:direct:a2,${ROOM}:group:r1,${ANNA}:direct:a1,closed@rooms.example.org:group:null`,
+        `${BEN}:direct:${Date.parse(at(9))}|a2,${ROOM}:group:${Date.parse(at(5))}|r1,` +
+          `${ANNA}:direct:${Date.parse(at(1))}|a1,closed@rooms.example.org:group:null`,
       );
       expect(chats[0].title).toBe(BEN);
       const closed = await session.fetchHistory('closed@rooms.example.org', null, 50);
@@ -545,10 +570,48 @@ export default async () => {
       const next = await session.fetchHistory(ANNA, window.highestSeq, 10, window.highestCursor);
       expect(next.messages.map((m) => m.text).join()).toBe('m6');
       expect(server.queries.at(-1)?.after).toBe('a5');
-      // The archive forgot the id: resume from the stored time instead of failing forever.
-      const resumed = await session.fetchHistory(ANNA, next.highestSeq, 10, 'expired');
-      expect(server.queries.at(-1)?.start).toBe(new Date(Date.parse(at(6))).toISOString());
+      // The archive forgot the id: resume from the stamp stored with it, minus the margin.
+      const resumed = await session.fetchHistory(ANNA, next.highestSeq, 10, `${Date.parse(at(6))}|gone`);
+      expect(server.queries.at(-1)?.start).toBe(new Date(Date.parse(at(6)) - RESUME_MARGIN_MS).toISOString());
       expect(resumed.messages.map((m) => m.remoteId).join()).toBe('a6');
+    });
+
+    await it('loses nothing of a coarse second when the stored id is forgotten', async () => {
+      // A server that stamps whole seconds: four messages share one real second, so their
+      // seqs run ahead of the stamp (t, t+1, t+2 …).
+      const second = at(7);
+      const server = fakeServer({
+        roster: [{ jid: ANNA, name: 'Anna', subscription: 'both' }],
+        own: [1, 2, 3].map((n) => entry({ id: `c${n}`, at: second, from: ANNA, body: `m${n}` })),
+      });
+      const session = new XmppChatSession(fakeApi(server));
+      await session.listChats();
+      const window = await session.fetchHistory(ANNA, null, 10);
+      expect(window.highestSeq).toBe(Date.parse(second) + 2);
+      // Two more arrive in that same second, then the archive loses the stored id.
+      server.own.push(
+        entry({ id: 'c4', at: second, from: ANNA, body: 'm4' }),
+        entry({ id: 'c5', at: second, from: ANNA, body: 'm5' }),
+      );
+      const cursor = window.highestCursor?.replace('|c3', '|forgotten') ?? null;
+      const next = await session.fetchHistory(ANNA, window.highestSeq, 10, cursor);
+      // Resuming from the seq (t+2) would have started after the real stamp and missed both.
+      expect(next.messages.some((m) => m.text === 'm4')).toBe(true);
+      expect(next.messages.some((m) => m.text === 'm5')).toBe(true);
+      // Re-delivered entries keep their archive ids, so they land on the stored rows.
+      expect(next.messages.filter((m) => m.remoteId === 'c1').length).toBe(1);
+      // Where the stored id IS still in the result, everything up to it is cut off.
+      const again = await session.fetchHistory(ANNA, window.highestSeq, 10, `${Date.parse(second)}|c3`);
+      expect(server.queries.at(-1)?.after).toBe('c3');
+      expect(again.messages.map((m) => m.text).join()).toBe('m4,m5');
+    });
+
+    await it('encodes the real stamp in the cursor and reads a bare id', async () => {
+      const e = entry({ id: 'x|1', at: at(3), from: ANNA, body: 'x' });
+      expect(decodeCursor(encodeCursor(e)).archiveId).toBe('x|1');
+      expect(decodeCursor(encodeCursor(e)).stampMs).toBe(Date.parse(at(3)));
+      expect(decodeCursor('plain-id').stampMs).toBe(null);
+      expect(decodeCursor('plain-id').archiveId).toBe('plain-id');
     });
   });
 

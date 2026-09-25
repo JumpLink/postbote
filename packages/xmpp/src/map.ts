@@ -25,6 +25,23 @@ import type {
 import { normalizeAddress } from '@postbote/protocol';
 import { type ArchivedEntry, bareJid, resourceOf } from './stanza.ts';
 
+/**
+ * The resume cursor handed to the engine: the archive id, plus the entry's REAL archive stamp.
+ * The seq cannot stand in for the stamp — it is pushed past it (`assignSeqs`) when a server
+ * stamps whole seconds — and resuming by time from it would skip the rest of that second.
+ */
+export function encodeCursor(entry: Pick<ArchivedEntry, 'archiveId' | 'stampMs'>): string {
+  return `${entry.stampMs ?? ''}|${entry.archiveId}`;
+}
+
+/** The archive id and stamp of a cursor. A bare id (no `|`) has no stamp. */
+export function decodeCursor(cursor: string): { archiveId: string; stampMs: number | null } {
+  const bar = cursor.indexOf('|');
+  if (bar === -1 || !/^\d*$/.test(cursor.slice(0, bar))) return { archiveId: cursor, stampMs: null };
+  const stamp = cursor.slice(0, bar);
+  return { archiveId: cursor.slice(bar + 1), stampMs: stamp ? Number(stamp) : null };
+}
+
 /** What the mapping needs to know about the chat an entry belongs to. */
 export interface ChatContext {
   kind: 'direct' | 'group';
@@ -56,7 +73,7 @@ export function toChatInfo(context: ChatContext, newest: ArchivedEntry | null): 
     // them there is nothing reliable to say.
     readInboxSeq: null,
     readOutboxSeq: null,
-    lastCursor: newest?.archiveId ?? null,
+    lastCursor: newest ? encodeCursor(newest) : null,
   };
 }
 
@@ -246,7 +263,7 @@ export function buildPage(
     lowestSeq: last >= 0 ? seqs[0] : null,
     exhausted: options.exhausted,
     reachedStart: options.reachedStart,
-    highestCursor: last >= 0 ? entries[last].archiveId : null,
+    highestCursor: last >= 0 ? encodeCursor(entries[last]) : null,
     edits: [...edits.values()],
     retracted: [...retracted],
   };

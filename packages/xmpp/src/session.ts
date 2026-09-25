@@ -9,11 +9,21 @@
 
 import type { ChatHistoryPage, ChatInfo, ChatSession } from '@postbote/protocol';
 import { type MamPage, type MamQuery, type XmppApi, XmppQueryError } from './api.ts';
-import { buildPage, type ChatContext, toChatInfo, unresolvedReferences, windowEntries } from './map.ts';
+import {
+  buildPage,
+  type ChatContext,
+  decodeCursor,
+  toChatInfo,
+  unresolvedReferences,
+  windowEntries,
+} from './map.ts';
 import type { ArchivedEntry } from './stanza.ts';
 
 /** Older entries fetched to resolve a correction or retraction of a message outside the page. */
 export const LOOKBACK = 100;
+
+/** How far before the stored stamp a resume by time starts. */
+export const RESUME_MARGIN_MS = 2_000;
 
 /** Archive queries in flight at once while listing (one per chat, for its newest entry). */
 const PROBE_CONCURRENCY = 8;
@@ -156,8 +166,7 @@ export class XmppChatSession implements ChatSession {
 
   /**
    * The page after the stored archive id. An archive that no longer knows the id (expired or
-   * purged: `item-not-found`) — or a cursor from before ids were stored — resumes by time from
-   * the stored seq instead. Entries it returns twice are the same rows: harmless.
+   * purged: `item-not-found`) resumes by time from the stamp stored with it (`decodeCursor`).
    */
   private async forward(
     chat: ChatState,
@@ -165,14 +174,21 @@ export class XmppChatSession implements ChatSession {
     limit: number,
     afterCursor: string | null,
   ): Promise<MamPage> {
-    if (afterCursor) {
+    const cursor = afterCursor ? decodeCursor(afterCursor) : null;
+    if (cursor) {
       try {
-        return await this.query(chat, { after: afterCursor, max: limit });
+        return await this.query(chat, { after: cursor.archiveId, max: limit });
       } catch (err) {
         if (!(err instanceof XmppQueryError) || err.condition !== 'item-not-found') throw err;
       }
     }
-    return this.query(chat, { start: new Date(afterSeq).toISOString(), max: limit });
+    // From the last entry's REAL stamp, never the seq (which runs ahead of it), minus a margin
+    // for servers that stamp coarser than they order. What comes back twice is the same row
+    // (keyed by archive id); what the stored id itself still names is cut off.
+    const from = (cursor?.stampMs ?? afterSeq) - RESUME_MARGIN_MS;
+    const page = await this.query(chat, { start: new Date(from).toISOString(), max: limit });
+    const at = cursor ? page.entries.findIndex((e) => e.archiveId === cursor.archiveId) : -1;
+    return at === -1 ? page : { ...page, entries: page.entries.slice(at + 1) };
   }
 
   async close(): Promise<void> {
