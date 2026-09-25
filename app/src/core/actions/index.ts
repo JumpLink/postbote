@@ -8,3 +8,4 @@ export * from './contacts.ts';
 export * from './calendar.ts';
 export * from './mail.ts';
 export * from './index-sync.ts';
+export * from './backends.ts';

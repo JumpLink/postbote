@@ -4,6 +4,7 @@ import { hideBin } from 'yargs/helpers';
 
 import {
   accountsCommand,
+  backendsCommand,
   calendarCommand,
   checkCommand,
   contactsCommand,
@@ -35,6 +36,7 @@ const parseArgs = () =>
     .command(syncCommand)
     .command(indexCommand)
     .command(accountsCommand)
+    .command(backendsCommand)
     .command(contactsCommand)
     .command(calendarCommand)
     .command(mcpCommand)

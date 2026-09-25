@@ -1,0 +1,135 @@
+import { describe, expect, it } from '@gjsify/unit';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { type BackendManifest, type MessageBackend } from '@postbote/protocol';
+import { MAIL_MANIFEST } from '@postbote/imap';
+import { BUILTIN_PLUGINS } from '../../../src/core/backends/builtin.ts';
+import { BackendRegistry, type BackendPlugin } from '../../../src/core/backends/registry.ts';
+import { defaultConfig, loadConfig, parseConfig, saveConfig } from '../../../src/core/config.ts';
+
+// The registry gate and the config it reads. No backend here is ever constructed for real;
+// the factories count how often they are called, which is the point: disabled means not loaded.
+
+const TERMS = {
+  summary: 'Unofficial client. The network may ban accounts that use it.',
+  url: 'https://example.org/terms',
+};
+
+function plugin(name: string, manifest: Partial<BackendManifest> = {}): BackendPlugin & { created: number } {
+  const entry = {
+    created: 0,
+    manifest: { ...MAIL_MANIFEST, name, displayName: name, ...manifest },
+    create(): MessageBackend {
+      entry.created++;
+      return { manifest: entry.manifest, kind: 'archive', listAccounts: async () => [] };
+    },
+  };
+  return entry;
+}
+
+function tempConfigPath(): { dir: string; path: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'postbote-config-'));
+  return { dir, path: join(dir, 'nested', 'config.json') };
+}
+
+export default async () => {
+  await describe('BackendRegistry', async () => {
+    await it('registers the built-in mail backend, enabled by the default config', async () => {
+      const registry = new BackendRegistry(BUILTIN_PLUGINS);
+      const [mail] = registry.status(defaultConfig());
+      expect(mail.name).toBe('mail');
+      expect(mail.enabled).toBe(true);
+      expect(mail.storeTier).toBe('derived');
+      expect(registry.enabled(defaultConfig()).length).toBe(1);
+    });
+
+    await it('loads nothing the config does not enable — mail included', async () => {
+      const registry = new BackendRegistry(BUILTIN_PLUGINS);
+      expect(registry.enabled({ backends: {}, senders: {} }).length).toBe(0);
+      expect(registry.enabled({ backends: { mail: { enabled: false } }, senders: {} }).length).toBe(0);
+    });
+
+    await it('refuses the first enable of a backend with terms, and changes nothing', async () => {
+      const chat = plugin('chat', { terms: TERMS });
+      const registry = new BackendRegistry([chat]);
+      const config = defaultConfig();
+      const result = registry.enable(config, 'chat');
+      expect(result.outcome).toBe('terms-required');
+      expect(result.terms?.summary).toBe(TERMS.summary);
+      expect(result.config).toBe(config);
+      expect(registry.enabled(result.config).length).toBe(0);
+      expect(chat.created).toBe(0);
+    });
+
+    await it('enables with accepted terms, and records when', async () => {
+      const registry = new BackendRegistry([plugin('chat', { terms: TERMS })]);
+      const now = new Date('2026-09-25T10:00:00Z');
+      const result = registry.enable(defaultConfig(), 'chat', { acceptTerms: true, now });
+      expect(result.outcome).toBe('enabled');
+      expect(result.config.backends.chat.termsAcceptedAt).toBe(now.toISOString());
+      expect(registry.enabled(result.config).map((p) => p.manifest.name)).toEqualArray(['chat']);
+    });
+
+    await it('does not honour a hand-edited `enabled: true` without accepted terms', async () => {
+      const registry = new BackendRegistry([plugin('chat', { terms: TERMS })]);
+      const config = { backends: { chat: { enabled: true } }, senders: {} };
+      expect(registry.enabled(config).length).toBe(0);
+      expect(registry.status(config)[0].termsAccepted).toBe(false);
+    });
+
+    await it('keeps the acceptance across disable, so re-enabling does not ask again', async () => {
+      const registry = new BackendRegistry([plugin('chat', { terms: TERMS })]);
+      const on = registry.enable(defaultConfig(), 'chat', { acceptTerms: true }).config;
+      const off = registry.disable(on, 'chat');
+      expect(registry.enabled(off).length).toBe(0);
+      expect(registry.enable(off, 'chat').outcome).toBe('enabled');
+    });
+
+    await it('rejects an invalid manifest, a duplicate name and an unknown backend', async () => {
+      expect(() => new BackendRegistry([plugin('Bad Name')])).toThrow(/invalid manifest/);
+      expect(() => new BackendRegistry([plugin('dup'), plugin('dup')])).toThrow(/two backends/);
+      expect(() => new BackendRegistry([plugin('one')]).enable(defaultConfig(), 'two')).toThrow(
+        /unknown backend/,
+      );
+    });
+  });
+
+  await describe('config', async () => {
+    await it('parses and normalizes sender overrides', async () => {
+      const config = parseConfig(
+        '{"backends":{"mail":{"enabled":true}},"senders":{"Anna@Example.org":"automated"}}',
+      );
+      expect(config.senders['anna@example.org']).toBe('automated');
+      expect(config.backends.mail.enabled).toBe(true);
+    });
+
+    await it('rejects a malformed file with the offending key named', async () => {
+      expect(() => parseConfig('not json')).toThrow(/not valid JSON/);
+      expect(() => parseConfig('{"backends":{"mail":{"enabled":"yes"}}}')).toThrow(/backends.mail.enabled/);
+      expect(() => parseConfig('{"senders":{"anna@example.org":"spam"}}')).toThrow(/senders/);
+      expect(() => parseConfig('{"senders":{"not-an-address":"automated"}}')).toThrow(/not a mail address/);
+    });
+
+    await it('an absent file means the default config', async () => {
+      const { dir, path } = tempConfigPath();
+      try {
+        expect(loadConfig(path).backends.mail.enabled).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('round-trips through the file, mode 0600', async () => {
+      const { dir, path } = tempConfigPath();
+      try {
+        saveConfig({ backends: { mail: { enabled: false } }, senders: {} }, path);
+        expect(loadConfig(path).backends.mail.enabled).toBe(false);
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+};

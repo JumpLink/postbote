@@ -29,6 +29,7 @@ import storeConversations from './unit/store/conversations.test.ts';
 
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
+import registry from './unit/core/registry.test.ts';
 
 import mcpGate from './unit/mcp/gate.test.ts';
 import mcpTools from './unit/mcp/tools.test.ts';
@@ -57,6 +58,7 @@ run({
   storeConversations,
   date,
   limits,
+  registry,
   mcpGate,
   mcpTools,
 });
