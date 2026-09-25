@@ -523,6 +523,19 @@ async function syncAccount(
       ]);
     }
     result.removed += batch.deletedConversations.length;
+
+    // Late news about messages stored earlier (a decryption key that arrived only now), for
+    // every chat — also the ones that had nothing new and were not fetched.
+    for (const revision of (await session.revisions?.()) ?? []) {
+      const conversationId = chatConversationId(name, account.id, revision.chatRemoteId);
+      if (!cursors.has(revision.chatRemoteId) && !chats.some((c) => c.remoteId === revision.chatRemoteId))
+        continue;
+      for (const remoteId of revision.retracted ?? []) {
+        batch.retracted.push(stableId('m-', conversationId, remoteId));
+      }
+      result.removed += revision.retracted?.length ?? 0;
+      for (const edit of revision.edits ?? []) batch.edit(conversationId, edit);
+    }
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
   } finally {
@@ -530,8 +543,11 @@ async function syncAccount(
     writeBatch(db, batch);
     try {
       await session.close();
-    } catch {
-      // A failed goodbye does not undo a finished sync.
+    } catch (err) {
+      // Loud, not swallowed: closing is where a backend persists its own secret state (Matrix's
+      // crypto store). What was written above stays; the account still reports the failure.
+      const message = `closing the session failed: ${err instanceof Error ? err.message : String(err)}`;
+      result.error = result.error ? `${result.error}; ${message}` : message;
     }
   }
   return result;

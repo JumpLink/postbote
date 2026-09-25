@@ -272,7 +272,21 @@ export interface ChatSession {
     limit: number,
     afterCursor?: string | null,
   ): Promise<ChatHistoryPage>;
+  /**
+   * Changes to messages stored by EARLIER runs that this run learned about outside any history
+   * page — e.g. an encrypted message whose key arrived only now. Optional; called once per run,
+   * after every chat was fetched, so it also reaches chats with nothing new.
+   */
+  revisions?(): Promise<ChatRevision[]>;
   close(): Promise<void>;
+}
+
+/** Edits and deletions of one chat's stored messages, outside a history page. */
+export interface ChatRevision {
+  chatRemoteId: string;
+  edits?: ChatEdit[];
+  /** Stored messages that leave the index, by remote id — like `ChatHistoryPage.retracted`. */
+  retracted?: string[];
 }
 
 /** The chat sync driver: dialogs and per-chat sequences, driven by `syncChats` in `@postbote/store`. */
