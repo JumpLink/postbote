@@ -136,6 +136,7 @@ class ParticipantDirectory {
       };
       for (const email of contact.emails) claim('email', email);
       for (const phone of contact.phones) claim('phone', phone);
+      for (const jid of contact.jids ?? []) claim('jid', jid);
       if (owned.length > 0) this.addresses.set(id, owned);
     }
   }
@@ -168,7 +169,13 @@ class ParticipantDirectory {
    */
   resolvePeer(scope: string, peerId: string, name: string | null, addresses: ParticipantAddress[]): string {
     const owners = addresses
-      .map((a) => this.byAddress.get(`${a.kind}:${a.value}`))
+      .flatMap((a) => [
+        this.byAddress.get(`${a.kind}:${a.value}`),
+        // A JID that is letter for letter a contact's mail address is that contact: most
+        // people's XMPP and mail accounts share the provider. Only a CONTACT's address counts —
+        // someone who merely mailed from it is no proof.
+        a.kind === 'jid' ? this.contactOwner(`email:${a.value}`) : undefined,
+      ])
       .filter((e): e is DirectoryEntry => e !== undefined);
     let entry = owners.find((e) => e.contactUid !== null) ?? owners[0];
     if (!entry) {
@@ -191,6 +198,11 @@ class ParticipantDirectory {
       this.addresses.set(entry.id, owned);
     }
     return entry.id;
+  }
+
+  private contactOwner(key: string): DirectoryEntry | undefined {
+    const entry = this.byAddress.get(key);
+    return entry?.contactUid ? entry : undefined;
   }
 
   participants(): DirectoryEntry[] {
