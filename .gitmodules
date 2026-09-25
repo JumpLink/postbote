@@ -1,0 +1,60 @@
+[submodule "refs/flare"]
+	path = refs/flare
+	url = https://gitlab.com/schmiddi-on-mobile/flare.git
+	shallow = true
+[submodule "refs/presage"]
+	path = refs/presage
+	url = https://github.com/whisperfish/presage.git
+	shallow = true
+[submodule "refs/libsignal"]
+	path = refs/libsignal
+	url = https://github.com/signalapp/libsignal.git
+	shallow = true
+[submodule "refs/signal-desktop"]
+	path = refs/signal-desktop
+	url = https://github.com/signalapp/Signal-Desktop.git
+	shallow = true
+[submodule "refs/fractal"]
+	path = refs/fractal
+	url = https://gitlab.gnome.org/World/fractal.git
+	shallow = true
+[submodule "refs/matrix-rust-sdk"]
+	path = refs/matrix-rust-sdk
+	url = https://github.com/matrix-org/matrix-rust-sdk.git
+	shallow = true
+[submodule "refs/matrix-spec"]
+	path = refs/matrix-spec
+	url = https://github.com/matrix-org/matrix-spec.git
+	shallow = true
+[submodule "refs/paper-plane"]
+	path = refs/paper-plane
+	url = https://github.com/paper-plane-developers/paper-plane.git
+	shallow = true
+[submodule "refs/mtcute"]
+	path = refs/mtcute
+	url = https://github.com/mtcute/mtcute.git
+	shallow = true
+[submodule "refs/whatsmeow"]
+	path = refs/whatsmeow
+	url = https://github.com/tulir/whatsmeow.git
+	shallow = true
+[submodule "refs/baileys"]
+	path = refs/baileys
+	url = https://github.com/WhiskeySockets/Baileys.git
+	shallow = true
+[submodule "refs/dino"]
+	path = refs/dino
+	url = https://github.com/dino/dino.git
+	shallow = true
+[submodule "refs/xmpp.js"]
+	path = refs/xmpp.js
+	url = https://github.com/xmppjs/xmpp.js.git
+	shallow = true
+[submodule "refs/convey"]
+	path = refs/convey
+	url = https://gitlab.gnome.org/donnybeelo/convey.git
+	shallow = true
+[submodule "refs/hylki"]
+	path = refs/hylki
+	url = https://github.com/hyprlab/hylki.git
+	shallow = true
