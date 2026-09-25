@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   utimesSync,
@@ -24,6 +25,8 @@ import {
 } from '@postbote/store';
 import {
   accountIdFromCreds,
+  FileJournal,
+  journalPath,
   JidResolver,
   parseJid,
   parsePairingPhone,
@@ -39,6 +42,7 @@ import {
   extractContent,
   unwrapContent,
 } from '@postbote/whatsapp';
+import type { WaMessage } from '@postbote/whatsapp';
 import { Curve } from 'baileys';
 import { freshDb } from '../store/fixtures.ts';
 import {
@@ -218,7 +222,7 @@ export default async () => {
       expect(direct.type).toBe('message');
       if (direct.type !== 'message') return;
       expect(direct.chatRemoteId).toBe(ANNA_LID);
-      expect(direct.message.remoteId).toBe(`${ANNA_LID}/A1`);
+      expect(direct.message.remoteId).toBe('A1');
       expect(direct.message.sender?.displayName).toBe('Anna');
       expect(direct.message.sender?.addresses.some((a) => a.kind === 'phone')).toBe(true);
       expect(direct.message.sentAt).toBe('2026-01-01T12:00:00.000Z');
@@ -254,7 +258,7 @@ export default async () => {
         false,
       );
       expect(JSON.stringify(revoke)).toBe(
-        JSON.stringify({ type: 'delete', chatRemoteId: ANNA_LID, remoteId: `${ANNA_LID}/A1` }),
+        JSON.stringify({ type: 'delete', chatRemoteId: ANNA_LID, remoteId: 'A1' }),
       );
       const [edit] = mapper.message(
         waMessage(ANNA_LID, 'P2', 6, {
@@ -275,7 +279,7 @@ export default async () => {
         JSON.stringify({
           type: 'edit',
           chatRemoteId: ANNA_LID,
-          remoteId: `${ANNA_LID}/A1`,
+          remoteId: 'A1',
           text: 'Neu',
           editedAt: '2026-01-01T12:01:00.000Z',
         }),
@@ -700,6 +704,181 @@ export default async () => {
         const store = SecretStore.open(join(context(dir).secretsDir, `${ACCOUNT}.db`));
         expect(store.get('baileys.creds', 'creds') !== null).toBe(true);
         store.close();
+      } finally {
+        db.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  await describe('WhatsApp receive journal', async () => {
+    await it('is durable before the handler returns, skips a torn tail, and keeps what came after a release', async () => {
+      const dir = tempDir();
+      const path = join(dir, 'secrets', 'a.journal');
+      try {
+        const journal = FileJournal.open(path);
+        const clock = new ManualClock();
+        const factory = fakeFactory(() => {});
+        const r = new WhatsAppReceiver(() => factory.create({ auth: null as never }), new WhatsAppMapper(), {
+          mode: 'follow',
+          coalesceMs: 0,
+          journal,
+          setTimer: clock.set,
+          clearTimer: clock.clear,
+        });
+        r.start();
+        await tick();
+        factory.sockets[0].emit('messages.upsert', {
+          messages: [waMessage(ANNA_LID, 'J1', 1, text('eins'))],
+          type: 'notify',
+        });
+        // On disk the moment the handler returned — before anyone asked for a batch.
+        expect(readFileSync(path, 'utf8').includes('"J1"')).toBe(true);
+        expect((statSync(path).mode & 0o777).toString(8)).toBe('600');
+        expect((await r.nextBatch())?.length).toBe(1);
+        factory.sockets[0].emit('messages.upsert', {
+          messages: [waMessage(ANNA_LID, 'J2', 2, text('zwei'))],
+          type: 'notify',
+        });
+        // Asking again acknowledges J1: it leaves the journal, J2 (not handed out yet) stays.
+        const next = await r.nextBatch();
+        expect(next?.length).toBe(1);
+        const kept = readFileSync(path, 'utf8');
+        expect(kept.includes('"J1"')).toBe(false);
+        expect(kept.includes('"J2"')).toBe(true);
+        await r.close();
+        // Closed without another nextBatch(): J2 may not be written, so it stays for replay.
+        writeFileSync(path, `${readFileSync(path, 'utf8')}{"type":"mess`);
+        const reopened = FileJournal.open(path);
+        expect(reopened.recovered.length).toBe(1);
+        reopened.close();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('a crash between receipt and the index write loses nothing, and replay stores each message once', async () => {
+      const dir = tempDir();
+      const db = freshDb();
+      try {
+        await link(dir);
+        const script = (messages: WaMessage[]) =>
+          fakeFactory((s) => {
+            s.emit('connection.update', { connection: 'open' });
+            if (messages.length > 0) s.emit('messages.upsert', { type: 'append', messages });
+            s.emit('connection.update', { receivedPendingNotifications: true });
+            s.emit('creds.update', { accountSyncCounter: 1 });
+          });
+        const backend = (factory: ReturnType<typeof script>) =>
+          new WhatsAppBackend(context(dir), {
+            createSocket: factory.create,
+            receiver: { quietMs: 20, coalesceMs: 0, maxMs: 5000 },
+            flushDelayMs: 10,
+          });
+        const journal = journalPath(join(context(dir).secretsDir, `${ACCOUNT}.db`));
+        // Run 1 "crashes": the index write throws after WhatsApp already delivered (and forgot) both.
+        const prepare = db.prepare.bind(db);
+        let crash = true;
+        (db as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+          if (crash && sql.includes('INSERT OR REPLACE INTO conversation_messages'))
+            throw new Error('simulated crash');
+          return prepare(sql);
+        }) as typeof db.prepare;
+        const first = await receiveDeliveries(
+          db,
+          backend(
+            script([
+              waMessage(ANNA_LID, 'C1', 10, text('eins')),
+              waMessage(ANNA_LID, 'C2', 11, text('zwei')),
+            ]),
+          ),
+        );
+        expect(first.accounts[0].error ?? '').toMatch(/simulated crash/);
+        expect(listConversations(db).length).toBe(0);
+        expect(readFileSync(journal, 'utf8').includes('"C2"')).toBe(true);
+        // Run 2: WhatsApp has nothing left to send; the journal has it.
+        crash = false;
+        const second = await receiveDeliveries(
+          db,
+          backend(script([waMessage(ANNA_LID, 'C3', 12, text('drei'))])),
+        );
+        expect(second.errors).toBe(0);
+        const conv = getConversation(db, chatConversationId('whatsapp', ACCOUNT, ANNA_LID), {
+          includeBodies: true,
+        });
+        expect(conv?.messages.map((m) => m.bodyText).join('|')).toBe('eins|zwei|drei');
+        expect(statSync(journal).size).toBe(0);
+        // A crash after the commit but before the journal was trimmed: replaying stores nothing twice.
+        const replay = new WhatsAppMapper().message(waMessage(ANNA_LID, 'C1', 10, text('eins')), false);
+        writeFileSync(journal, `${replay.map((e) => JSON.stringify(e)).join('\n')}\n`);
+        await receiveDeliveries(db, backend(script([])));
+        expect(
+          getConversation(db, chatConversationId('whatsapp', ACCOUNT, ANNA_LID))?.conversation.messageCount,
+        ).toBe(3);
+      } finally {
+        db.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('a chat first seen under the phone number merges into the LID chat once the pair is learned', async () => {
+      const dir = tempDir();
+      const db = freshDb();
+      try {
+        await link(dir);
+        const factory = fakeFactory((s) => {
+          s.emit('connection.update', { connection: 'open' });
+          s.emit('messages.upsert', {
+            type: 'append',
+            messages: [waMessage(ANNA_PN, 'M1', 10, text('per Nummer'))],
+          });
+          s.emit('connection.update', { receivedPendingNotifications: true });
+          s.emit('creds.update', { accountSyncCounter: 1 });
+        });
+        const backend = (f: typeof factory) =>
+          new WhatsAppBackend(context(dir), {
+            createSocket: f.create,
+            receiver: { quietMs: 20, coalesceMs: 0, maxMs: 5000 },
+            flushDelayMs: 10,
+          });
+        await receiveDeliveries(db, backend(factory));
+        expect(listConversations(db).length).toBe(1);
+        // Next run: the pair arrives mid-sync, then a message under the LID and a revoke of M1 by it.
+        const flip = fakeFactory((s) => {
+          s.emit('connection.update', { connection: 'open' });
+          s.emit('lid-mapping.update', { lid: ANNA_LID, pn: ANNA_PN });
+          s.emit('messages.upsert', {
+            type: 'notify',
+            messages: [waMessage(ANNA_LID, 'M2', 20, text('per LID'))],
+          });
+          s.emit('connection.update', { receivedPendingNotifications: true });
+          s.emit('creds.update', { accountSyncCounter: 1 });
+        });
+        await receiveDeliveries(db, backend(flip));
+        const all = listConversations(db);
+        expect(all.length).toBe(1);
+        const merged = getConversation(db, chatConversationId('whatsapp', ACCOUNT, ANNA_LID), {
+          includeBodies: true,
+        });
+        expect(merged?.messages.map((m) => m.bodyText).join('|')).toBe('per Nummer|per LID');
+        const cursors = db.prepare('SELECT chat_id, last_seq FROM chat_cursors').all() as Array<
+          Record<string, unknown>
+        >;
+        expect(cursors.map((c) => `${c.chat_id}:${c.last_seq}`).join(',')).toBe(`${ANNA_LID}:20`);
+        // A later revoke addressed under the LID reaches the merged message.
+        const revoke = fakeFactory((s) => {
+          s.emit('messages.upsert', {
+            type: 'notify',
+            messages: [waMessage(ANNA_LID, 'P9', 30, { protocolMessage: { type: 0, key: { id: 'M1' } } })],
+          });
+          s.emit('connection.update', { receivedPendingNotifications: true });
+          s.emit('creds.update', { accountSyncCounter: 1 });
+        });
+        await receiveDeliveries(db, backend(revoke));
+        const after = getConversation(db, chatConversationId('whatsapp', ACCOUNT, ANNA_LID), {
+          includeBodies: true,
+        });
+        expect(after?.messages.map((m) => m.bodyText).join('|')).toBe('per LID');
       } finally {
         db.close();
         rmSync(dir, { recursive: true, force: true });

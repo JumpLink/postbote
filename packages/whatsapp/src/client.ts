@@ -17,6 +17,13 @@
  *     double tick every linked device sends, and the signal for the server to forget the
  *     message. Without it the server would re-deliver forever.
  *   - `end()` closes the socket; it never calls `logout()`, which would unlink the device.
+ *   - What Baileys DOES write on every connect is protocol housekeeping the multi-device
+ *     protocol requires of any linked device: it uploads fresh Signal pre-keys when the server
+ *     runs low (Socket/socket.ts, `uploadPreKeys` after the digest check and the pre-key count
+ *     check), resyncs the app state after the first history sync (Socket/chats.ts,
+ *     `doAppStateSync` → `resyncAppState`) and clears the server's dirty bits for what it
+ *     synced (`cleanDirtyBits`). None of it touches a chat's content, a message's read state or
+ *     what contacts see of this device.
  *
  * The logger is silent: Baileys logs protocol objects (keys, message nodes) at info and debug,
  * and nothing of that may reach a terminal scrollback or an MCP transcript.

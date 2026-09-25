@@ -65,6 +65,8 @@ export class JidResolver {
   private readonly pnToLid = new Map<string, string>();
   private readonly lidToPn = new Map<string, string>();
   private readonly lookup: LidLookup;
+  /** Pairs learned since the last `takeLearned()`: each may join two chats filed apart so far. */
+  private learned: Array<{ pn: string; lid: string }> = [];
 
   constructor(lookup: LidLookup = NO_LOOKUP) {
     this.lookup = lookup;
@@ -77,16 +79,42 @@ export class JidResolver {
     const pn = isPnJid(x) ? x : isPnJid(y) ? y : null;
     const lid = isLidJid(x) ? x : isLidJid(y) ? y : null;
     if (!pn || !lid) return;
-    this.pnToLid.set(pn.user, lid.user);
-    this.lidToPn.set(lid.user, pn.user);
+    this.pair(pn.user, lid.user);
+  }
+
+  private pair(pnUser: string, lidUser: string): void {
+    if (this.pnToLid.get(pnUser) === lidUser) return;
+    this.pnToLid.set(pnUser, lidUser);
+    this.lidToPn.set(lidUser, pnUser);
+    this.learned.push({ pn: pnUser, lid: lidUser });
+  }
+
+  /**
+   * The pairs learned since the last call. A chat filed under the phone number before its LID
+   * was known must now be merged into the LID chat — the caller turns these into merge events.
+   * A pair found through the stored mapping counts too: an earlier run may have filed the chat
+   * under the number before Baileys stored the pair.
+   */
+  takeLearned(): Array<{ pn: string; lid: string }> {
+    const learned = this.learned;
+    this.learned = [];
+    return learned;
   }
 
   private lidOf(pnUser: string): string | null {
-    return this.pnToLid.get(pnUser) ?? this.lookup.lidForPn(pnUser);
+    const known = this.pnToLid.get(pnUser);
+    if (known) return known;
+    const stored = this.lookup.lidForPn(pnUser);
+    if (stored) this.pair(pnUser, stored);
+    return stored;
   }
 
   private pnOf(lidUser: string): string | null {
-    return this.lidToPn.get(lidUser) ?? this.lookup.pnForLid(lidUser);
+    const known = this.lidToPn.get(lidUser);
+    if (known) return known;
+    const stored = this.lookup.pnForLid(lidUser);
+    if (stored) this.pair(stored, lidUser);
+    return stored;
   }
 
   /**

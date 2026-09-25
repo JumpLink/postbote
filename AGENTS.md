@@ -95,6 +95,9 @@ the MCP server via `run_in_background` when driving it.
   never "fix" a problem by deleting and rebuilding it, and never ask the session for the next
   batch before the previous one is written. The WhatsApp auth state (Signal keys) is `secret`.
   A linked device that does not connect for ~14 days is logged out by WhatsApp.
+  Baileys acknowledges a message BEFORE emitting it, so the receiver journals every event
+  (fsync'ed, `secrets/whatsapp/<account>.journal`, 0600) before returning to Baileys, and replays
+  a left-over journal first — never bypass it.
 - **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
   settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
 - Server-side deletions: the mailbox engine sees them every flag pass; the chat engine only on

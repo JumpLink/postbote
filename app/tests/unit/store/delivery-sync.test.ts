@@ -363,5 +363,48 @@ export default async () => {
         db.close();
       }
     });
+    await it('merges a chat filed under a second id into the first, in one transaction', async () => {
+      const db = freshDb();
+      try {
+        await receiveDeliveries(
+          db,
+          fakeBackend([
+            [
+              incoming('pn-anna', msg('M1', 1, 'eins')),
+              incoming('pn-anna', msg('M2', 2, 'zwei')),
+              { type: 'chat', chat: { remoteId: 'pn-anna', kind: 'direct', title: 'Anna', members: [ANNA] } },
+            ],
+          ]),
+        );
+        await receiveDeliveries(
+          db,
+          fakeBackend([
+            [
+              incoming('pn-anna', msg('M3', 3, 'drei')),
+              { type: 'chat-merged', from: 'pn-anna', into: 'lid-anna' },
+              incoming('lid-anna', msg('M4', 4, 'vier')),
+              { type: 'delete', chatRemoteId: 'lid-anna', remoteId: 'M2' },
+              // A merge of a chat never stored changes nothing.
+              { type: 'chat-merged', from: 'pn-nobody', into: 'lid-nobody' },
+            ],
+          ]),
+        );
+        expect(listConversations(db).length).toBe(1);
+        expect(getConversation(db, conv('pn-anna'))).toBe(null);
+        const merged = getConversation(db, conv('lid-anna'), { includeBodies: true });
+        expect(merged?.conversation.title).toBe('Anna');
+        expect(merged?.messages.map((m) => m.bodyText).join('|')).toBe('eins|drei|vier');
+        const cursors = db.prepare('SELECT chat_id, last_seq FROM chat_cursors').all() as Array<
+          Record<string, unknown>
+        >;
+        expect(cursors.map((c) => `${c.chat_id}:${c.last_seq}`).join(',')).toBe('lid-anna:4');
+        const members = db.prepare('SELECT conversation_id FROM chat_members').all() as Array<
+          Record<string, unknown>
+        >;
+        expect(members.every((m) => m.conversation_id === conv('lid-anna'))).toBe(true);
+      } finally {
+        db.close();
+      }
+    });
   });
 };

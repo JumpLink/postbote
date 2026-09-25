@@ -272,6 +272,12 @@ export type DeliveryEvent =
   | { type: 'chat'; chat: DeliveryChat }
   /** The user read the chat on another device: all but the newest `unreadCount` incoming messages are read. */
   | { type: 'chat-read'; chatRemoteId: string; unreadCount: number }
+  /**
+   * Two chat ids turned out to be one chat (a network that addresses a person two ways, and
+   * told which ids belong together only later): everything stored under `from` moves to
+   * `into`. Message remote ids stay as they are. A no-op when nothing is stored under `from`.
+   */
+  | { type: 'chat-merged'; from: string; into: string }
   /** The user deleted the chat on another device: it goes here too, with its messages. */
   | { type: 'chat-deleted'; chatRemoteId: string }
   /** The user cleared the chat's messages on another device; the chat itself stays. */
@@ -325,7 +331,10 @@ export interface DeliverySession {
    * `catch-up` mode once the backlog is delivered, in `follow` mode only after `close`.
    *
    * Delivery is at most once on these networks — the server forgets a message once this device
-   * acknowledged it — so the engine writes every batch before asking for the next one.
+   * acknowledged it — so the engine writes every batch before asking for the next one, and
+   * asking IS the acknowledgement: a session that journals what it received may drop the
+   * previous batch from its journal then, and must keep it when the session is closed without
+   * another call (the write failed).
    */
   nextBatch(): Promise<DeliveryEvent[] | null>;
   /** How the session ended; meaningful once `nextBatch` resolved null. */

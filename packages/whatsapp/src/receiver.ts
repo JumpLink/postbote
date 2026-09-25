@@ -21,6 +21,7 @@
 import type { DeliveryEvent, DeliveryMode, DeliveryOutcome, DeliverySession } from '@postbote/protocol';
 import type { WaEventMap, WaEventName, WaSocketHandle } from './api.ts';
 import { disconnectReason, disconnectStatus, LOGGED_OUT } from './api.ts';
+import type { EventJournal } from './journal.ts';
 import type { WhatsAppMapper } from './map.ts';
 
 export const RELINK_HINT = 'link it again with `postbote accounts add whatsapp`';
@@ -44,6 +45,17 @@ export interface ReceiverOptions {
   initialSync?: boolean;
   /** How long closing waits for Baileys to hand over what it still holds. */
   drainMs?: number;
+  /**
+   * The write-ahead journal (`journal.ts`). Every event is appended to it before the handler
+   * returns to Baileys; without one, a crash loses what was received but not yet written.
+   */
+  journal?: EventJournal;
+  /**
+   * The most events held in memory. Past it the session stops receiving (it cannot slow
+   * Baileys down — the server was already told) and reports not caught up; the next sync
+   * continues where WhatsApp's queue left off. The journal is the first line; this bounds memory.
+   */
+  maxQueued?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
@@ -79,6 +91,10 @@ export class WhatsAppReceiver implements DeliverySession {
   private maxTimer: unknown = null;
   private drainTimer: unknown = null;
   private readonly drainMs: number;
+  private readonly journal: EventJournal | null;
+  private readonly maxQueued: number;
+  /** The journal size when the last batch was handed out: released on the next `nextBatch()`. */
+  private handedMark: number | null = null;
 
   constructor(connect: () => WaSocketHandle, mapper: WhatsAppMapper, options: ReceiverOptions) {
     this.connect = connect;
@@ -90,12 +106,16 @@ export class WhatsAppReceiver implements DeliverySession {
     this.maxReconnects = options.maxReconnects ?? 3;
     this.awaitingInitialSync = options.initialSync ?? false;
     this.drainMs = options.drainMs ?? 5_000;
+    this.journal = options.journal ?? null;
+    this.maxQueued = options.maxQueued ?? 50_000;
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
 
   /** Open the first connection and start the clock. */
   start(): void {
+    // What a crashed run received but never wrote goes first, before anything new arrives.
+    if (this.journal && this.journal.recovered.length > 0) this.queue.push(...this.journal.recovered);
     this.open();
     if (this.mode === 'catch-up') {
       this.touch();
@@ -167,7 +187,10 @@ export class WhatsAppReceiver implements DeliverySession {
         false,
       ),
     );
-    on('lid-mapping.update', ({ lid, pn }) => this.mapper.resolver.learn(lid, pn));
+    on('lid-mapping.update', ({ lid, pn }) => {
+      this.mapper.resolver.learn(lid, pn);
+      this.push([], false);
+    });
     on('creds.update', (update) => {
       if (typeof update.accountSyncCounter === 'number' && update.accountSyncCounter > 0) {
         this.awaitingInitialSync = false;
@@ -214,13 +237,31 @@ export class WhatsAppReceiver implements DeliverySession {
    * Queue events. `activity` marks traffic that proves the backlog is still flowing — a read
    * receipt or a contact update is not, so it does not keep a finished catch-up alive.
    */
-  private push(events: DeliveryEvent[], activity: boolean): void {
+  private push(mapped: DeliveryEvent[], activity: boolean): void {
     if (this.ended) return;
+    // LID ↔ phone pairs learned while mapping these: merge a chat filed under the number into
+    // the LID chat. AFTER the events, so it also moves any of them mapped before the pair was
+    // known; everything mapped later resolves to the LID already.
+    const events = [...mapped, ...this.mapper.takeMerges()];
     if (events.length > 0) {
+      // Durable before control returns to Baileys: the server already forgot these.
+      try {
+        this.journal?.append(events);
+      } catch (err) {
+        // Keep them in memory — the engine may still write them — but stop taking more.
+        this.queue.push(...events);
+        this.wake();
+        this.finish({
+          caughtUp: false,
+          error: `the receive journal cannot be written (${err instanceof Error ? err.message : String(err)})`,
+        });
+        return;
+      }
       this.queue.push(...events);
       this.wake();
+      if (this.queue.length > this.maxQueued) this.finish({ caughtUp: false, error: null });
     }
-    if (activity || events.length > 0) this.touch();
+    if (activity || mapped.length > 0) this.touch();
   }
 
   /** Restart the quiet period. */
@@ -278,6 +319,11 @@ export class WhatsAppReceiver implements DeliverySession {
   }
 
   async nextBatch(): Promise<DeliveryEvent[] | null> {
+    // Being asked again means the previous batch is committed: drop it from the journal.
+    if (this.handedMark !== null) {
+      this.journal?.release(this.handedMark);
+      this.handedMark = null;
+    }
     for (;;) {
       if (this.queue.length > 0) {
         // Let a burst (a history chunk, a flushed buffer) land in one batch: one transaction.
@@ -286,6 +332,9 @@ export class WhatsAppReceiver implements DeliverySession {
         }
         const batch = this.queue;
         this.queue = [];
+        // Every queued event was appended before it was queued, so the journal up to here is
+        // exactly this batch (and what came before it).
+        this.handedMark = this.journal?.size() ?? null;
         return batch;
       }
       if (this.ended) return null;
@@ -305,6 +354,8 @@ export class WhatsAppReceiver implements DeliverySession {
     // `nextBatch()` returning null, which only happens after the drain.
     this.finish({ caughtUp: false, error: null });
     if (!this.ended) await new Promise<void>((resolve) => this.endWaiters.push(resolve));
+    // Not released here: without a further `nextBatch()` the last batch may not be written.
+    this.journal?.close();
   }
 }
 

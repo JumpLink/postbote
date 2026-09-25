@@ -104,9 +104,13 @@ function iso(seconds: number | null): string | null {
   return seconds === null ? null : new Date(seconds * 1000).toISOString();
 }
 
-/** The network message id, unique within the account: WhatsApp's ids are unique per chat. */
-export function remoteMessageId(chatId: string, messageId: string): string {
-  return `${chatId}/${messageId}`;
+/**
+ * The network message id. WhatsApp's id alone — not prefixed with the chat — so that a chat
+ * merged from its phone-number id into its LID keeps its messages' ids; the store keys a row by
+ * chat AND id, so two chats cannot collide.
+ */
+export function remoteMessageId(messageId: string): string {
+  return messageId;
 }
 
 /** Turns Baileys' events into delivery events, learning JID pairs as it goes. */
@@ -115,6 +119,19 @@ export class WhatsAppMapper {
 
   constructor(resolver: JidResolver = new JidResolver()) {
     this.resolver = resolver;
+  }
+
+  /**
+   * A `chat-merged` event for every LID ↔ phone pair learned since the last call: the direct
+   * chat filed under the number (before the LID was known) joins the one under the LID. The
+   * store ignores a merge whose source chat it does not have, so most of these cost nothing.
+   */
+  takeMerges(): DeliveryEvent[] {
+    return this.resolver.takeLearned().map(({ pn, lid }) => ({
+      type: 'chat-merged',
+      from: `${pn}@s.whatsapp.net`,
+      into: `${lid}@lid`,
+    }));
   }
 
   /** The chat a key belongs to, or null for status updates and ids that are no chat. */
@@ -138,7 +155,7 @@ export class WhatsAppMapper {
       const target = protocol.key?.id;
       if (!target) return [];
       if (protocol.type === REVOKE)
-        return [{ type: 'delete', chatRemoteId: chatId, remoteId: remoteMessageId(chatId, target) }];
+        return [{ type: 'delete', chatRemoteId: chatId, remoteId: remoteMessageId(target) }];
       if (protocol.type === MESSAGE_EDIT) {
         const edited = extractContent(unwrapContent(protocol.editedMessage));
         const ms = toNumber(protocol.timestampMs);
@@ -147,7 +164,7 @@ export class WhatsAppMapper {
           {
             type: 'edit',
             chatRemoteId: chatId,
-            remoteId: remoteMessageId(chatId, target),
+            remoteId: remoteMessageId(target),
             text: edited?.text ?? null,
             editedAt: at,
           },
@@ -170,7 +187,7 @@ export class WhatsAppMapper {
           : null;
     const seconds = toNumber(raw.messageTimestamp);
     const message: ChatMessage = {
-      remoteId: remoteMessageId(chatId, key.id),
+      remoteId: remoteMessageId(key.id),
       seq: seconds ?? 0,
       sentAt: iso(seconds),
       editedAt: null,
@@ -178,7 +195,7 @@ export class WhatsAppMapper {
       fromSelf,
       text: extracted.text,
       hasAttachments: extracted.hasAttachments,
-      replyToRemoteId: extracted.replyTo ? remoteMessageId(chatId, extracted.replyTo) : null,
+      replyToRemoteId: extracted.replyTo ? remoteMessageId(extracted.replyTo) : null,
       threadRemoteId: null,
     };
     const events: DeliveryEvent[] = [
@@ -267,7 +284,7 @@ export class WhatsAppMapper {
         events.push({
           type: 'peer-read',
           chatRemoteId: chatId,
-          remoteIds: [remoteMessageId(chatId, key.id)],
+          remoteIds: [remoteMessageId(key.id)],
         });
     }
     return events;
@@ -283,7 +300,7 @@ export class WhatsAppMapper {
         events.push({
           type: 'peer-read',
           chatRemoteId: chatId,
-          remoteIds: [remoteMessageId(chatId, key.id)],
+          remoteIds: [remoteMessageId(key.id)],
         });
     }
     return events;
@@ -299,7 +316,7 @@ export class WhatsAppMapper {
     for (const key of data.keys) {
       const chatId = this.chatOf(key);
       if (chatId && key.id)
-        events.push({ type: 'delete', chatRemoteId: chatId, remoteId: remoteMessageId(chatId, key.id) });
+        events.push({ type: 'delete', chatRemoteId: chatId, remoteId: remoteMessageId(key.id) });
     }
     return events;
   }

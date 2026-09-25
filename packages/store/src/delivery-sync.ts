@@ -309,6 +309,9 @@ class DeliveryBatch {
         if (this.state.chats.has(event.chatRemoteId)) this.touchedChats.add(event.chatRemoteId);
         return;
       }
+      case 'chat-merged':
+        // Handled by `writeEvents`, which splits the batch around it.
+        return;
       case 'chat-cleared':
       case 'chat-deleted': {
         for (const [id, pending] of this.messages) {
@@ -383,10 +386,66 @@ function messageRow(batch: DeliveryBatch, id: string, pending: PendingMessage): 
   ];
 }
 
-function writeBatch(db: IndexDatabase, batch: DeliveryBatch, syncedAt: string): void {
+/** The message columns, in `messageRow` order — also what a chat merge reads back. */
+const MESSAGE_COLUMNS = `id, conversation_id, backend, account_id, presentation, sender_name, sender_kind,
+  sender_address, from_self, sent_at, seen, has_attachments, classification, classification_reason,
+  remote_id, body, remote_seq, sender_peer_id, edited_at, reply_to_remote_id, thread_remote_id, peer_read`;
+
+/**
+ * Move a chat stored under `from` into `into` — one chat the network addressed two ways (a
+ * WhatsApp person by phone number first, by LID once the pair was known). Messages are re-keyed
+ * (a row id includes its conversation) and re-inserted in multi-row statements; members follow;
+ * the `from` conversation, its cursor and participants go. A handful of statements whatever the
+ * chat's size, and nothing at all for a `from` that was never stored — the common case.
+ */
+function mergeChat(db: IndexDatabase, batch: DeliveryBatch, from: string, into: string): boolean {
+  const { backend, accountId, state } = batch;
+  const source = state.chats.get(from);
+  if (!source || from === into) return false;
+  const conv = (chatRemoteId: string) => chatConversationId(backend, accountId, chatRemoteId);
+  const rows = db
+    .prepare(`SELECT ${MESSAGE_COLUMNS} FROM conversation_messages WHERE conversation_id = ?`)
+    .all(conv(from)) as Array<Record<string, unknown>>;
+  const columns = MESSAGE_COLUMNS.split(',').map((c) => c.trim());
+  insertMany(
+    db,
+    `INSERT OR REPLACE INTO conversation_messages (${MESSAGE_COLUMNS})`,
+    rows.map((r) =>
+      columns.map((c): SqlValue => {
+        if (c === 'id') return deliveredMessageId(backend, accountId, into, String(r.remote_id));
+        if (c === 'conversation_id') return conv(into);
+        const v = r[c];
+        return v === undefined ? null : (v as SqlValue);
+      }),
+    ),
+  );
+  db.prepare('DELETE FROM conversation_messages WHERE conversation_id = ?').run(conv(from));
+  db.prepare(
+    `INSERT OR REPLACE INTO chat_members (conversation_id, backend, account_id, peer_id)
+       SELECT ?, backend, account_id, peer_id FROM chat_members WHERE conversation_id = ?`,
+  ).run(conv(into), conv(from));
+  for (const table of ['chat_members', 'chat_cursors', 'conversation_participants']) {
+    db.prepare(`DELETE FROM ${table} WHERE conversation_id = ?`).run(conv(from));
+  }
+  db.prepare('DELETE FROM conversations WHERE id = ?').run(conv(from));
+  const target = state.chats.get(into);
+  const seqs = [target?.lastSeq, source.lastSeq].filter((n): n is number => typeof n === 'number');
+  state.chats.set(into, {
+    kind: target?.kind ?? source.kind,
+    title: target?.title ?? source.title,
+    lastSeq: seqs.length > 0 ? Math.max(...seqs) : null,
+  });
+  state.chats.delete(from);
+  // The target's row, cursor and aggregates are written by the batch this merge belongs to.
+  batch.touchedChats.add(into);
+  return true;
+}
+
+/** Write one batch's rows. Runs inside the caller's transaction. */
+function writeBatchRows(db: IndexDatabase, batch: DeliveryBatch, syncedAt: string): void {
   const { backend, accountId, state } = batch;
   const conv = (chatRemoteId: string) => chatConversationId(backend, accountId, chatRemoteId);
-  withTransaction(db, () => {
+  {
     // Deletions first: words the user or the sender took back must not outlive that here.
     runIn(db, (p) => `DELETE FROM conversation_messages WHERE id IN (${p})`, [...batch.deletedMessages]);
     const cleared = [...batch.clearedChats, ...batch.deletedChats].map(conv);
@@ -489,7 +548,45 @@ function writeBatch(db: IndexDatabase, batch: DeliveryBatch, syncedAt: string): 
        WHERE id IN (${p})`,
       touched.map(conv),
     );
+  }
+}
+
+/**
+ * Write one batch of events in ONE transaction. A `chat-merged` whose source chat is stored
+ * splits the batch: what came before it is written first, then the merge, then the rest — so
+ * every event sees the chats exactly as the ones before it left them, without re-keying events
+ * in memory. A merge of a chat never stored does not split anything.
+ */
+function writeEvents(
+  db: IndexDatabase,
+  backend: string,
+  accountId: string,
+  state: AccountState,
+  events: readonly DeliveryEvent[],
+  syncedAt: string,
+): { added: number; edited: number; removed: number } {
+  const totals = { added: 0, edited: 0, removed: 0 };
+  withTransaction(db, () => {
+    let batch = new DeliveryBatch(backend, accountId, state);
+    const flush = () => {
+      writeBatchRows(db, batch, syncedAt);
+      totals.added += batch.added;
+      totals.edited += batch.edited;
+      totals.removed += batch.removed;
+      batch = new DeliveryBatch(backend, accountId, state);
+    };
+    for (const event of events) {
+      if (event.type === 'chat-merged') {
+        if (!state.chats.has(event.from) || event.from === event.into) continue;
+        flush();
+        mergeChat(db, batch, event.from, event.into);
+        continue;
+      }
+      batch.apply(event);
+    }
+    flush();
   });
+  return totals;
 }
 
 async function receiveAccount(
@@ -526,15 +623,13 @@ async function receiveAccount(
       const events = await session.nextBatch();
       if (events === null) break;
       if (events.length === 0) continue;
-      const batch = new DeliveryBatch(name, account.id, state);
-      for (const event of events) batch.apply(event);
       // A failed write stops the account: asking for more would acknowledge messages that
-      // then exist nowhere.
-      writeBatch(db, batch, now().toISOString());
+      // then exist nowhere (and the session keeps the batch in its journal for the next run).
+      const written = writeEvents(db, name, account.id, state, events, now().toISOString());
       result.batches++;
-      result.added += batch.added;
-      result.edited += batch.edited;
-      result.removed += batch.removed;
+      result.added += written.added;
+      result.edited += written.edited;
+      result.removed += written.removed;
     }
     const outcome = session.outcome();
     result.caughtUp = outcome.caughtUp;

@@ -21,6 +21,7 @@ import { listSessionAccounts, sessionPath } from './accounts.ts';
 import { SecretStoreAuthState } from './auth-state.ts';
 import { createBaileysSocket, type SocketFactory } from './client.ts';
 import { JidResolver } from './jid.ts';
+import { FileJournal, journalPath } from './journal.ts';
 import { linkWhatsApp } from './login.ts';
 import { WHATSAPP_MANIFEST } from './manifest.ts';
 import { WhatsAppMapper } from './map.ts';
@@ -90,9 +91,18 @@ export class WhatsAppBackend implements DeliveryBackend {
     }
     const createSocket = this.options.createSocket ?? createBaileysSocket;
     const mapper = new WhatsAppMapper(new JidResolver(auth.lidLookup()));
+    let journal: FileJournal;
+    try {
+      journal = FileJournal.open(journalPath(path));
+    } catch (err) {
+      auth.flush();
+      store.close();
+      throw err;
+    }
     const receiver = new WhatsAppReceiver(() => createSocket({ auth }), mapper, {
       ...this.options.receiver,
       mode: options.mode,
+      journal,
       initialSync: !(auth.state.creds.accountSyncCounter > 0),
     });
     receiver.start();

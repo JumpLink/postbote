@@ -10,6 +10,7 @@ export * from './jid.ts';
 export * from './map.ts';
 export * from './auth-state.ts';
 export * from './receiver.ts';
+export * from './journal.ts';
 export * from './accounts.ts';
 export * from './qr.ts';
 export * from './client.ts';

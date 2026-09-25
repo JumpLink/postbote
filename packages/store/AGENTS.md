@@ -80,6 +80,12 @@ forgets a message once this device acknowledged it, so these rows are `state`. C
   the account instead of receiving more into nothing.
 - Edits, deletions, "clear chat", read state arrive as events and are applied in the batch —
   there is no full scan to fall back on. A message re-delivered replaces its row.
+- A `chat-merged` event (one chat the network addressed two ways, e.g. a WhatsApp person by phone
+  number, then by LID) splits its batch: rows before it are written, the chat's rows are re-keyed
+  into the target in multi-row statements, then the rest — all in the batch's one transaction.
+- Asking the session for the next batch IS the acknowledgement that the previous one is
+  committed; a session with a write-ahead journal drops it then. Never call `nextBatch()` after
+  a failed write.
 - The rebuild must keep leaving chat rows alone (it deletes only `backend = 'mail'` rows). A
   schema change that rewrites `conversation_messages` wholesale would destroy them.
 - Budget: a batch costs a fixed handful of statements plus its multi-row inserts (22 columns →
