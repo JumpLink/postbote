@@ -20,7 +20,8 @@
     "start": "gjsify run dist/postbote.gjs.mjs",
     "dev": "gjsify run build:gjs && gjsify run start",
     "test": "gjsify test",
-    "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs"
+    "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs",
+    "test:telegram-network": "gjsify build tests/integration/telegram-handshake.ts --app gjs --outfile dist/telegram-handshake.gjs.mjs && gjsify run dist/telegram-handshake.gjs.mjs"
   },
   "gjsify": {
     "excludeGlobals": [
@@ -52,6 +53,7 @@
     "@postbote/imap": "*",
     "@postbote/protocol": "*",
     "@postbote/store": "*",
+    "@postbote/telegram": "*",
     "dotenv": "^17.4.2",
     "yargs": "^18.1.0",
     "zod": "^4.4.3"

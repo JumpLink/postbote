@@ -28,6 +28,8 @@ import storeThreads from './unit/store/threads.test.ts';
 import storeConversations from './unit/store/conversations.test.ts';
 import storeChatSync from './unit/store/chat-sync.test.ts';
 
+import telegram from './unit/telegram/telegram.test.ts';
+
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
 import registry from './unit/core/registry.test.ts';
@@ -58,6 +60,7 @@ run({
   storeThreads,
   storeConversations,
   storeChatSync,
+  telegram,
   date,
   limits,
   registry,

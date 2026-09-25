@@ -97,6 +97,25 @@ export default async () => {
     });
   });
 
+  await describe('built-in Telegram backend', async () => {
+    await it('is registered, off by default, and gated behind its terms', async () => {
+      const registry = new BackendRegistry(BUILTIN_PLUGINS);
+      const telegram = registry.status(defaultConfig()).find((s) => s.name === 'telegram');
+      expect(telegram?.enabled).toBe(false);
+      expect(telegram?.syncModel).toBe('server-archive');
+      expect(telegram?.terms !== null).toBe(true);
+      expect(registry.enable(defaultConfig(), 'telegram').outcome).toBe('terms-required');
+    });
+
+    await it('cannot be constructed while disabled — the gate holds for create() too', async () => {
+      const registry = new BackendRegistry(BUILTIN_PLUGINS);
+      const context = { settings: {}, env: {}, secretsDir: join(tmpdir(), 'postbote-never-created') };
+      expect(() => registry.create(defaultConfig(), 'telegram', context)).toThrow(/not enabled/);
+      const enabled = registry.enable(defaultConfig(), 'telegram', { acceptTerms: true }).config;
+      expect(registry.create(enabled, 'telegram', context).kind).toBe('chat');
+    });
+  });
+
   await describe('config', async () => {
     await it('parses and normalizes sender overrides', async () => {
       const config = parseConfig(
@@ -131,6 +150,18 @@ export default async () => {
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    });
+
+    await it('parses a backend settings block and rejects a nested value', async () => {
+      const config = parseConfig(
+        JSON.stringify({ backends: { telegram: { enabled: true, settings: { apiId: 1, apiHash: 'x' } } } }),
+      );
+      expect(config.backends.telegram.settings?.apiId).toBe(1);
+      expect(() =>
+        parseConfig(
+          JSON.stringify({ backends: { telegram: { enabled: true, settings: { apiId: { a: 1 } } } } }),
+        ),
+      ).toThrow(/settings\.apiId/);
     });
 
     await it('classify writes the override to the config, and `auto` removes it', async () => {

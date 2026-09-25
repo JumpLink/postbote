@@ -12,6 +12,7 @@
 
 import {
   type BackendCapabilities,
+  type BackendContext,
   type BackendManifest,
   type MessageBackend,
   type SyncModel,
@@ -24,7 +25,7 @@ import type { PostboteConfig } from '../config.ts';
 /** A registry entry: the manifest, readable without running the backend, and its factory. */
 export interface BackendPlugin<B extends MessageBackend = MessageBackend> {
   manifest: BackendManifest;
-  create(): B;
+  create(context: BackendContext): B;
 }
 
 export interface BackendStatus {
@@ -96,6 +97,21 @@ export class BackendRegistry {
         termsAccepted: accepted,
       };
     });
+  }
+
+  /**
+   * Construct one ENABLED backend. Refuses a disabled one or one whose terms are not accepted,
+   * so no code path can reach a backend around the gate.
+   */
+  create(config: PostboteConfig, name: string, context: BackendContext): MessageBackend {
+    const plugin = this.enabled(config).find((p) => p.manifest.name === name);
+    if (!plugin) {
+      this.require(name);
+      throw new Error(
+        `backend ${name} is not enabled — \`postbote backends enable ${name}\` turns it on (and shows its terms)`,
+      );
+    }
+    return plugin.create(context);
   }
 
   /** The plugins `config` enables — the only ones any code path may construct. */

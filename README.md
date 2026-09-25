@@ -26,8 +26,13 @@ is built on, which is where this is headed.
   instant and work offline. Indexing ~1200 messages takes about half a minute;
   searching them afterwards takes under a second.
 
+- **Telegram** (optional, off by default) — your direct chats, groups and
+  channels in the same conversation view as mail, through Telegram's official
+  API ([mtcute](https://github.com/mtcute/mtcute)). See [Telegram](#telegram).
+
 Everything is **read-only**. Messages are fetched with IMAP `BODY.PEEK`, so
-opening a mail through Postbote never marks it as read.
+opening a mail through Postbote never marks it as read. Telegram is read the
+same way: nothing is sent, edited, deleted or marked read.
 
 ## Requirements
 
@@ -99,6 +104,42 @@ chat backends ([ADR 0001](docs/adr/0001-multi-protocol-messenger.md)): each
 backend is enabled explicitly in the config, and one with a terms notice only
 after `postbote backends enable <name> --accept-terms`.
 
+## Telegram
+
+Telegram requires every third-party client to use API credentials of its own
+user. Postbote ships none, so the first step is yours:
+
+1. Create an app for yourself at <https://my.telegram.org> → *API development
+   tools*. You get an `api_id` (a number) and an `api_hash` (32 hex characters).
+2. Give them to postbote — either in the environment
+   (`POSTBOTE_TELEGRAM_API_ID`, `POSTBOTE_TELEGRAM_API_HASH`, which win) or in
+   the config file:
+
+   ```json
+   { "backends": { "telegram": { "enabled": true, "settings": { "apiId": 1234567, "apiHash": "…" } } } }
+   ```
+3. Enable the backend (this shows Telegram's terms once) and log in:
+
+   ```bash
+   postbote backends enable telegram --accept-terms
+   postbote accounts add telegram     # phone number → login code → 2FA password if set
+   postbote accounts list --backend telegram
+   postbote sync                      # mail and Telegram into one index
+   postbote conversations list --people-only
+   ```
+
+The first sync takes the newest 200 messages of every chat; later syncs walk
+forward from there, at most 5 000 messages per run (the rest follows on the
+next). A contact whose phone number is in your address book becomes the same
+person as their mail address. Channels and bots are classified *automated*.
+
+The login leaves a **session file** at
+`$XDG_DATA_HOME/postbote/secrets/telegram/telegram-<user id>.db` (mode `0600`
+in a `0700` directory; override the base with `POSTBOTE_SECRETS_DIR`). Whoever
+holds it can read your Telegram account: back it up like a password, never share
+it. Telegram lists it under *Settings → Devices* as `postbote`, where you can
+end it; deleting the file ends it on this machine.
+
 ## As an MCP server
 
 `postbote mcp` speaks MCP over stdio. Registered in an MCP client it exposes
@@ -126,7 +167,12 @@ live in `$XDG_CONFIG_HOME/postbote/config.json` (mode `0600`, override with
 `POSTBOTE_CONFIG`). Unlike the index they cannot be rebuilt from a server, so
 back that file up.
 
-Nothing is sent anywhere. Postbote talks to your mail server and to nothing else.
+Chat sessions (Telegram) are **secrets**, kept apart from the index under
+`$XDG_DATA_HOME/postbote/secrets/` — the index can be rebuilt from the servers,
+a session cannot, and no command or MCP tool ever returns it.
+
+Nothing is sent anywhere. Postbote talks to your mail server — and to Telegram
+if you enabled it — and to nothing else.
 
 ## Development
 
