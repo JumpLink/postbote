@@ -57,7 +57,7 @@ import {
 
 const NAMES = new Map([[ANNA, 'Anna Example']]);
 const T0 = Date.parse('2026-09-01T10:00:00Z');
-/** T0 plus whole seconds: the sequence is in seconds (see `seqOf`). */
+/** T0 plus whole seconds. */
 const at = (seconds: number): number => T0 + seconds * 1000;
 const S = (seconds: number): number => seqOf(at(seconds));
 
@@ -174,7 +174,7 @@ export default async () => {
       const e = text(ANNA, T0, 'Hallo');
       const m = toChatMessage(e, ME, NAMES);
       expect(m?.remoteId).toBe(e.eventId);
-      expect(m?.seq).toBe(T0 / 1000);
+      expect(m?.seq).toBe(T0);
       expect(m?.sentAt).toBe('2026-09-01T10:00:00.000Z');
       expect(m?.text).toBe('Hallo');
       expect(m?.sender?.displayName).toBe('Anna Example');
@@ -288,7 +288,7 @@ export default async () => {
       const gone = text(ANNA, T0, 'versehentlich');
       const mapped = mapEvents([gone, redaction(ANNA, T0 + 5, gone.eventId)], ME, NAMES);
       expect(mapped.messages.length).toBe(0);
-      expect(mapped.deletedRemoteIds.join()).toBe(gone.eventId);
+      expect(mapped.retracted.join()).toBe(gone.eventId);
     });
 
     await it('turns a room into a chat: direct names the other person, cursors are timestamps', async () => {
@@ -322,17 +322,17 @@ export default async () => {
   });
 
   await describe('Matrix history walk', async () => {
-    await it('takes the newest window and never splits a second', async () => {
+    await it('takes the newest window and never splits a millisecond', async () => {
       const api = new FakeMatrixApi();
       api.addRoom({ roomId: '!r' });
       for (let i = 0; i < 10; i++) api.post('!r', text(ANNA, at(i * 10), `m${i}`));
-      // Two messages in the same second at the window's lower edge.
-      api.post('!r', text(ANNA, at(200), 'a'), text(BEN, at(200) + 400, 'b'), text(ANNA, at(300), 'c'));
+      // Two messages in the same millisecond at the window's lower edge.
+      api.post('!r', text(ANNA, at(200), 'a'), text(BEN, at(200), 'b'), text(ANNA, at(300), 'c'));
       const session = new MatrixChatSession(api);
       const page = await session.fetchHistory('!r', null, 2);
       expect(page.messages.map((m) => m.text).join()).toBe('a,b,c');
       expect(page.highestSeq).toBe(S(300));
-      // Not the room's start: an older event may share the lowest second.
+      // Not the room's start: an older event may share the lowest millisecond.
       expect(page.lowestSeq).toBe(S(200) + 1);
       expect(page.reachedStart).toBe(false);
       expect(page.exhausted).toBe(true);

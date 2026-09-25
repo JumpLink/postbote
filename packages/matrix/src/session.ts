@@ -11,8 +11,8 @@
  * The walk is cached per room for the session, so the engine's page-by-page loop over one chat
  * costs one walk, not one per page.
  *
- * The sequence is `origin_server_ts` in seconds (`seqOf` in `map.ts`). A page is never cut
- * between two events of the same second: the engine asks for "strictly newer than the cursor",
+ * The sequence is `origin_server_ts` in milliseconds (`seqOf` in `map.ts`). A page is never cut
+ * between two events of the same millisecond: the engine asks for "strictly newer than the cursor",
  * and a cut there would lose the second one for good.
  */
 
@@ -81,7 +81,7 @@ export class MatrixChatSession implements ChatSession {
         this.ledgerChanged = true;
       }
     }
-    for (const id of mapped.deletedRemoteIds) if (ids?.delete(id)) this.ledgerChanged = true;
+    for (const id of mapped.retracted) if (ids?.delete(id)) this.ledgerChanged = true;
     return mapped;
   }
 
@@ -130,7 +130,7 @@ export class MatrixChatSession implements ChatSession {
       }
       if (ids.size === 0) this.ledger.delete(roomId);
       if (edits.length > 0 || deleted.length > 0) {
-        revisions.push({ chatRemoteId: roomId, edits, deletedRemoteIds: deleted });
+        revisions.push({ chatRemoteId: roomId, edits, retracted: deleted });
       }
     }
     return revisions;
@@ -180,7 +180,7 @@ export class MatrixChatSession implements ChatSession {
       return { messages: [], highestSeq: null, lowestSeq: null, exhausted: true, reachedStart: false };
     }
     // The oldest `limit` messages above the cursor, and every event up to the last one of them —
-    // extended through events of the same second.
+    // extended through events of the same millisecond.
     let cut = newer.length;
     let count = 0;
     for (let i = 0; i < newer.length; i++) {
@@ -196,7 +196,7 @@ export class MatrixChatSession implements ChatSession {
     return {
       messages: mapped.messages,
       edits: mapped.edits,
-      deletedRemoteIds: mapped.deletedRemoteIds,
+      retracted: mapped.retracted,
       highestSeq: Math.max(...taken.map((e) => seqOf(e.ts))),
       lowestSeq: Math.min(...taken.map((e) => seqOf(e.ts))),
       exhausted,
@@ -219,7 +219,7 @@ export class MatrixChatSession implements ChatSession {
     // Asked again: a walk that reached the room's start stopped without asking.
     const found = countTo();
     let cut = found === -1 ? walk.events.length : found;
-    // Never between two events of the same second (see the file comment).
+    // Never between two events of the same millisecond (see the file comment).
     while (
       cut > 0 &&
       cut < walk.events.length &&
@@ -236,10 +236,10 @@ export class MatrixChatSession implements ChatSession {
     return {
       messages: mapped.messages,
       edits: mapped.edits,
-      deletedRemoteIds: mapped.deletedRemoteIds,
+      retracted: mapped.retracted,
       highestSeq: Math.max(...covered.map((e) => seqOf(e.ts))),
       // Unless the page reaches the room's start, an older, unfetched event may share the lowest
-      // second; the range that proves a deletion therefore starts one above it.
+      // millisecond; the range that proves a deletion therefore starts one above it.
       lowestSeq: reachedStart ? lowest : lowest + 1,
       exhausted: true,
       reachedStart,

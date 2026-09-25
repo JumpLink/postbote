@@ -304,9 +304,7 @@ function writeBatch(db: IndexDatabase, batch: ChatBatch): void {
     for (const edit of batch.edits) {
       // With a sender: the user's own message matches '', anyone else's its peer id.
       const bySender =
-        edit.length > 4
-          ? ` AND ((from_self = 1 AND ? = '') OR (from_self = 0 AND sender_peer_id = ?))`
-          : '';
+        edit.length > 4 ? ` AND ((from_self = 1 AND ? = '') OR (from_self = 0 AND sender_peer_id = ?))` : '';
       db.prepare(
         `UPDATE conversation_messages SET body = ?, edited_at = ? WHERE conversation_id = ? AND remote_id = ?${bySender}`,
       ).run(...edit);

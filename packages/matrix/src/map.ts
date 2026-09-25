@@ -10,8 +10,6 @@
  * both accepted and handled where they bite: equal timestamps (a page is never cut between two
  * events of the same millisecond, see `session.ts`), and an event federated in late with an
  * older timestamp than the cursor, which an incremental run skips and the next full scan finds.
- *
- * In SECONDS, not milliseconds — see `seqOf`.
  */
 
 import type { ChatInfo, ChatMessage, ChatPeer, ChatEdit } from '@postbote/protocol';
@@ -19,17 +17,12 @@ import { normalizeAddress } from '@postbote/protocol';
 import type { MxEvent, MxRoom } from './api.ts';
 
 /**
- * The chat sequence of an event: its `origin_server_ts` in whole seconds.
- *
- * gjsify gap (unfixed, no upstream issue yet): gjsify's libgda-backed `node:sqlite` returns an
- * EMPTY result for any SELECT that reads an INTEGER above 2^31-1 (0.49.0; repro: insert
- * 2147483648, `SELECT seq FROM t` gives `[]`), so a millisecond timestamp in `remote_seq` makes
- * the whole chat vanish from every query on GJS while Node shows it. Seconds fit until 2038.
- * Events of one second are never split across pages (`session.ts`), so the coarser sequence
- * costs no message. Switch to milliseconds once the store round-trips 64-bit integers.
+ * The chat sequence of an event: its `origin_server_ts` in milliseconds, like the other chat
+ * backends. The store reads sequence columns as text (`seqColumn`, gjsify#1839), so values above
+ * 2^31 are safe.
  */
 export function seqOf(ts: number): number {
-  return Math.floor(ts / 1000);
+  return ts;
 }
 
 /** What an encrypted message this device holds no key for is stored as. Never the ciphertext. */
@@ -166,7 +159,7 @@ export interface MappedEvents {
   /** Edits of messages NOT on this page — earlier ones, already stored. */
   edits: ChatEdit[];
   /** Messages the network reports removed (redacted). */
-  deletedRemoteIds: string[];
+  retracted: string[];
 }
 
 /**
@@ -223,6 +216,6 @@ export function mapEvents(
   return {
     messages: messages.filter((m) => !gone.has(m.remoteId)),
     edits: [...edits.values()].filter((e) => !gone.has(e.remoteId)),
-    deletedRemoteIds: deleted,
+    retracted: deleted,
   };
 }
