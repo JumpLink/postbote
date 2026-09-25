@@ -25,11 +25,11 @@ SMTP, no flag write, no move, no delete.
 
 | Package | Contains | May import |
 |---|---|---|
-| `@postbote/protocol` | **Pure.** RFC grammar (IMAP lexer, ENVELOPE, FETCH, LIST, BODYSTRUCTURE, MIME, RFC 2047/2231, modified UTF-7), DTOs, errors, the `MailBackend` port | nothing |
+| `@postbote/protocol` | **Pure.** RFC grammar (IMAP lexer, ENVELOPE, FETCH, LIST, BODYSTRUCTURE, MIME, RFC 2047/2231, modified UTF-7), DTOs, errors, the plugin API: `MessageBackend` port + manifest, and the `MailBackend` mailbox driver | nothing |
 | `@postbote/gnome` | GOA + EDS: accounts, contacts, calendar, IMAP credentials | `protocol`, `gi://` |
 | `@postbote/imap` | Gio TLS transport, IMAP client, folders, search, fetch, attachments | `protocol`, `gnome`, `gi://` |
-| `@postbote/store` | SQLite index, sync engine, XDG paths, file writes | `protocol`, `node:*` |
-| `postbote-cli` (`app/`) | yargs CLI + MCP server | all of the above |
+| `@postbote/store` | SQLite index, sync engine, conversations (threading, classification), XDG paths, file writes | `protocol`, `node:*` |
+| `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
 **`store` must never import `imap`.** The sync engine is driven through the `MailBackend` port
 declared in `protocol` and injected by `app`. That keeps `store` free of `gi://` even
@@ -76,7 +76,12 @@ the MCP server via `run_in_background` when driving it.
 - Test fixtures are **synthetic only**. Never commit a real message, address, or mailbox name.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
 - Only `postbote sync` writes to the index. A search never does — one mental model, and no
-  surprise disk growth from a read.
+  surprise disk growth from a read. User decisions (enabled backends, accepted terms,
+  per-sender classification) go to `$XDG_CONFIG_HOME/postbote/config.json`, never the index,
+  and overrides apply at read time.
+- **Backends load only through the registry** (`app/src/core/backends/`), and only when the
+  config enables them; a backend with a terms notice needs `--accept-terms` first. Built-in
+  mail goes through it too — do not construct a backend anywhere else.
 
 ## Conventions
 

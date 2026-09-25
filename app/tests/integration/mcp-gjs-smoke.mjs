@@ -36,6 +36,8 @@ const EXPECTED_TOOLS = [
   'accounts_list',
   'calendar_list_events',
   'contacts_search',
+  'conversations_get',
+  'conversations_list',
   'mail_get_message',
   'mail_list_folders',
   'mail_list_parts',
@@ -129,7 +131,7 @@ console.log('OK: server exits cleanly on stdin EOF (no orphan)');
 // ── 3. the read-only gate actually CLOSES ─────────────────────────────────────
 //
 // Section 1 asserts every served tool is read-only. That is necessary and NOT sufficient: all
-// ten real tools declare `readOnlyHint: true`, so a gate that had quietly stopped wrapping
+// twelve real tools declare `readOnlyHint: true`, so a gate that had quietly stopped wrapping
 // `registerTool` would serve exactly the same catalogue and section 1 would still pass. It
 // cannot distinguish a working gate from no gate at all.
 //

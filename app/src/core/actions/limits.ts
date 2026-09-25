@@ -40,3 +40,7 @@ export function capLimit(value: number | undefined, spec: LimitSpec): number {
   if (value === undefined || !Number.isFinite(value)) return spec.default;
   return Math.max(1, Math.min(Math.floor(value), spec.max));
 }
+
+export const CONVERSATION_LIMIT: LimitSpec = { default: 20, max: 100 };
+/** Per-message body cap in `conversations show`, so one long thread cannot fill a transcript. */
+export const CONVERSATION_BODY_CHARS: LimitSpec = { default: 5_000, max: 50_000 };

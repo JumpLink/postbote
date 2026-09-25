@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerAccountsTools } from './tools/accounts.ts';
 import { registerCalendarTools } from './tools/calendar.ts';
 import { registerContactsTools } from './tools/contacts.ts';
+import { registerConversationTools } from './tools/conversations.ts';
 import { registerGateCanary } from './tools/gate-canary.ts';
 import { registerIndexTools } from './tools/index-sync.ts';
 import { registerMailTools } from './tools/mail.ts';
@@ -24,6 +25,7 @@ const SERVER_VERSION = '0.1.0';
 const REGISTRARS: Array<(server: McpServer) => void> = [
   registerMailTools,
   registerIndexTools,
+  registerConversationTools,
   registerContactsTools,
   registerCalendarTools,
   registerAccountsTools,

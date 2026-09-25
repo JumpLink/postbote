@@ -4,6 +4,8 @@ import {
   ATTACHMENT_BYTES,
   BODY_CHARS,
   CONTACT_LIMIT,
+  CONVERSATION_BODY_CHARS,
+  CONVERSATION_LIMIT,
   EVENT_LIMIT,
   type LimitSpec,
   MAIL_LIMIT,
@@ -11,6 +13,7 @@ import {
 import { registerAccountsTools } from '../../../src/frontends/mcp/tools/accounts.ts';
 import { registerCalendarTools } from '../../../src/frontends/mcp/tools/calendar.ts';
 import { registerContactsTools } from '../../../src/frontends/mcp/tools/contacts.ts';
+import { registerConversationTools } from '../../../src/frontends/mcp/tools/conversations.ts';
 import { registerIndexTools } from '../../../src/frontends/mcp/tools/index-sync.ts';
 import { registerMailTools } from '../../../src/frontends/mcp/tools/mail.ts';
 import { createRecorder, type Recorder } from './recorder.ts';
@@ -19,6 +22,7 @@ function registerAll(): Recorder {
   const rec = createRecorder();
   registerMailTools(rec.server);
   registerIndexTools(rec.server);
+  registerConversationTools(rec.server);
   registerContactsTools(rec.server);
   registerCalendarTools(rec.server);
   registerAccountsTools(rec.server);
@@ -37,6 +41,8 @@ const BOUNDED: Array<{ tool: string; field: string; spec: LimitSpec }> = [
   { tool: 'calendar_list_events', field: 'limit', spec: EVENT_LIMIT },
   { tool: 'mail_save_attachment', field: 'max_bytes', spec: ATTACHMENT_BYTES },
   { tool: 'mail_search_local', field: 'limit', spec: MAIL_LIMIT },
+  { tool: 'conversations_list', field: 'limit', spec: CONVERSATION_LIMIT },
+  { tool: 'conversations_get', field: 'max_body_chars', spec: CONVERSATION_BODY_CHARS },
 ];
 
 export default async () => {
@@ -50,6 +56,8 @@ export default async () => {
         'accounts_list',
         'calendar_list_events',
         'contacts_search',
+        'conversations_get',
+        'conversations_list',
         'mail_get_message',
         'mail_list_folders',
         'mail_list_parts',

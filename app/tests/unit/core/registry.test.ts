@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@gjsify/unit';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,7 @@ import { type BackendManifest, type MessageBackend } from '@postbote/protocol';
 import { MAIL_MANIFEST } from '@postbote/imap';
 import { BUILTIN_PLUGINS } from '../../../src/core/backends/builtin.ts';
 import { BackendRegistry, type BackendPlugin } from '../../../src/core/backends/registry.ts';
+import { conversationsClassify } from '../../../src/core/actions/conversations.ts';
 import { defaultConfig, loadConfig, parseConfig, saveConfig } from '../../../src/core/config.ts';
 
 // The registry gate and the config it reads. No backend here is ever constructed for real;
@@ -127,6 +128,18 @@ export default async () => {
         saveConfig({ backends: { mail: { enabled: false } }, senders: {} }, path);
         expect(loadConfig(path).backends.mail.enabled).toBe(false);
         expect(statSync(path).mode & 0o777).toBe(0o600);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    await it('classify writes the override to the config, and `auto` removes it', async () => {
+      const { dir, path } = tempConfigPath();
+      try {
+        conversationsClassify('Ben@Example.net', 'conversational', path);
+        expect(JSON.parse(readFileSync(path, 'utf8')).senders['ben@example.net']).toBe('conversational');
+        conversationsClassify('ben@example.net', 'auto', path);
+        expect(loadConfig(path).senders['ben@example.net']).toBe(undefined);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
