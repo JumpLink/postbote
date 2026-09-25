@@ -8,13 +8,14 @@
  * Not part of CI (it needs the network). Run: `gjsify workspace postbote-cli test:signal-network`
  */
 
-import { probeProvisioning } from '@postbote/signal';
+import { createNet, loadSignalLib, probeProvisioning } from '@postbote/signal';
 
 let ok = false;
 try {
-  const { ms, addressLength, urlLength } = await probeProvisioning();
+  const lib = await loadSignalLib();
+  const { ms, urlLength } = await probeProvisioning(lib, createNet(lib));
   console.log(
-    `signal: provisioning address received after ${ms} ms (${addressLength} chars, link URL ${urlLength} chars, not shown); connection closed`,
+    `signal: provisioning address received after ${ms} ms (link URL ${urlLength} chars, not shown); connection closed`,
   );
   ok = true;
 } catch (err) {

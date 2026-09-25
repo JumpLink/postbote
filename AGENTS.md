@@ -31,12 +31,12 @@ SMTP, no flag write, no move, no delete.
 | `@postbote/store` | SQLite index, sync engines (mailbox + chat), conversations (threading, classification), secret store, XDG paths, file writes | `protocol`, `node:*` |
 | `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
 | `@postbote/whatsapp` | WhatsApp `delivery` backend on Baileys (unofficial protocol: WebSocket, WASM, libsignal), its auth state on `SecretStore`, the QR / pairing-code link | `protocol`, `store`, `baileys`, `node:*` — no `gi://` |
-| `@postbote/signal` | Signal skeleton on `@signalapp/libsignal-client` (Rust behind N-API; on GJS through `@gjsify/napi`): manifest, the `sgnl://linkdevice` URL, the provisioning probe. No sync driver yet, not in the registry | `protocol`, `@signalapp/libsignal-client`, `node:*` — no `gi://` |
+| `@postbote/signal` | Signal `delivery` backend on `@signalapp/libsignal-client` (Rust behind N-API; on GJS through `@gjsify/napi`, loaded on first use), its protocol stores on `SecretStore`, the QR link as a linked device, the fail-closed request gate | `protocol`, `store`, `@signalapp/libsignal-client`, `qrcode-generator`, `node:*` — no `gi://` |
 | `@postbote/xmpp` | XMPP `chat` backend on xmpp.js (composed by hand: domain-checked direct TLS, WebSocket, SCRAM), history from MAM only, the account file on `SecretStore`, the login. NEVER sends presence, markers or messages | `protocol`, `store`, `@xmpp/*`, `node:*` — no `gi://` |
 | `@postbote/matrix` | Matrix `chat` backend on matrix-js-sdk + the Rust crypto as WASM (`@matrix-org/matrix-sdk-crypto-wasm`), its crypto store as an in-memory IndexedDB snapshotted into `SecretStore`, the password login | `protocol`, `store`, `matrix-js-sdk`, `@matrix-org/*`, `fake-indexeddb`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
-**`store` must never import a backend** (`imap`, `telegram`, `xmpp`, `matrix`, …). The sync engines are driven
+**`store` must never import a backend** (`imap`, `telegram`, `xmpp`, `matrix`, `signal`, …). The sync engines are driven
 through the driver ports declared in `protocol` (`MailBackend`, `ChatBackend`) and injected by
 `app`. That keeps `store` free of `gi://` and of any network library even transitively, which
 is the only reason the sync algorithms — the most intricate part of this project — can be
@@ -104,6 +104,17 @@ the MCP server via `run_in_background` when driving it.
   Baileys acknowledges a message BEFORE emitting it, so the receiver journals every event
   (fsync'ed, `secrets/whatsapp/<account>.journal`, 0600) before returning to Baileys, and replays
   a left-over journal first — never bypass it.
+- **Signal is read-only through a gate too.** The only way to send a request is a libsignal chat
+  connection's `fetch`, and it is handed out only behind `guardedFetch` (`packages/signal/src/
+  guard.ts`): at link time `PUT /v1/devices/link` and `PUT /v2/keys?identity=aci`, during a sync
+  nothing — the sync's `ChatHandle` has no `fetch` at all. Widen the allowlist only with a test
+  naming the request. The one thing a sync sends is the envelope acknowledgement.
+- **Signal acknowledges only what is on disk.** Per commit: decrypt → journal (fsync,
+  `secrets/signal/<account>.journal`) → protocol store flush → acknowledge. Never acknowledge
+  first (Signal deletes acknowledged envelopes), and never flush the protocol store on `close`
+  (`store.discard()`): a saved ratchet step for an unacknowledged envelope turns its redelivery
+  into a "duplicate" and loses the message. libsignal is never imported at module level — it is
+  loaded on first use (`lib.ts`) so postbote starts where the addon does not.
 - **Matrix is read-only through a gate, not through good intentions.** Every request of
   matrix-js-sdk goes through `readOnlyFetch` (`packages/matrix/src/guard.ts`): GETs, login,
   the sync filter and the E2EE key protocol pass; a `/sync` without `set_presence=offline`

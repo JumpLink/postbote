@@ -26,12 +26,13 @@ export class MemorySessionStore extends Signal.SessionStore {
 }
 
 export class MemoryIdentityStore extends Signal.IdentityKeyStore {
-  readonly identity = Signal.PrivateKey.generate();
+  readonly identity: Signal.PrivateKey;
   readonly registrationId: number;
   readonly known = new Map<string, Signal.PublicKey>();
-  constructor(registrationId: number) {
+  constructor(registrationId: number, identity?: Signal.PrivateKey) {
     super();
     this.registrationId = registrationId;
+    this.identity = identity ?? Signal.PrivateKey.generate();
   }
   async getIdentityKey(): Promise<Signal.PrivateKey> {
     return this.identity;
@@ -103,6 +104,23 @@ export class MemoryKyberPreKeyStore extends Signal.KyberPreKeyStore {
   }
 }
 
+export class MemorySenderKeyStore extends Signal.SenderKeyStore {
+  readonly records = new Map<string, Signal.SenderKeyRecord>();
+  async saveSenderKey(
+    sender: Signal.ProtocolAddress,
+    distributionId: string,
+    record: Signal.SenderKeyRecord,
+  ): Promise<void> {
+    this.records.set(`${key(sender)}::${distributionId}`, record);
+  }
+  async getSenderKey(
+    sender: Signal.ProtocolAddress,
+    distributionId: string,
+  ): Promise<Signal.SenderKeyRecord | null> {
+    return this.records.get(`${key(sender)}::${distributionId}`) ?? null;
+  }
+}
+
 /** One party: its address and every store libsignal asks for. */
 export class Party {
   readonly address: Signal.ProtocolAddress;
@@ -111,9 +129,10 @@ export class Party {
   readonly preKeys = new MemoryPreKeyStore();
   readonly signedPreKeys = new MemorySignedPreKeyStore();
   readonly kyberPreKeys = new MemoryKyberPreKeyStore();
-  constructor(aci: string, deviceId: number, registrationId: number) {
+  readonly senderKeys = new MemorySenderKeyStore();
+  constructor(aci: string, deviceId: number, registrationId: number, identity?: Signal.PrivateKey) {
     this.address = Signal.ProtocolAddress.new(aci, deviceId);
-    this.identity = new MemoryIdentityStore(registrationId);
+    this.identity = new MemoryIdentityStore(registrationId, identity);
   }
 
   /** Publishes one EC, one signed and one Kyber pre-key, as the server would hand them out. */
