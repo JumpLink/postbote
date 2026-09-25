@@ -5,8 +5,8 @@
  * through the app's registry. HOW its messages are synced is a driver on top, picked by `kind`:
  * `mailbox` (folders, UIDs, UIDVALIDITY — IMAP-shaped, and the reason it is not forced into a
  * chat shape) and `chat` (dialogs with a per-chat monotonic message sequence, for server-archive
- * chat networks: Telegram, Matrix, XMPP with MAM). A delivery-only driver joins here with the
- * first network that needs it.
+ * chat networks: Telegram, Matrix, XMPP with MAM) and `delivery` (events pushed once by a
+ * network with no server archive: WhatsApp, later Signal).
  *
  * The `MailBackend` interface is the load-bearing seam of the project. `@postbote/store` drives the sync
  * engine THROUGH it and never imports `@postbote/imap`, which is the only reason the most
@@ -244,4 +244,114 @@ export interface ChatBackend extends MessageBackend {
 /** Narrow a registry entry to the chat driver. */
 export function isChatBackend(backend: MessageBackend): backend is ChatBackend {
   return backend.kind === 'chat';
+}
+
+// ── the delivery driver ─────────────────────────────────────────────────
+
+/**
+ * One chat as a delivery-only network describes it. There is no sequence to walk: what the
+ * network reports is the chat's identity, and — when it knows them — its members.
+ */
+export interface DeliveryChat {
+  remoteId: string;
+  kind: ChatInfo['kind'];
+  title: string | null;
+  /** The peers known to be in it, the user excluded. Null: this report says nothing about members. */
+  members: ChatPeer[] | null;
+}
+
+/**
+ * One thing that happened, as a delivery-only network pushes it. A delivery session turns the
+ * network's own events into these, so the store engine applies them without naming a network.
+ *
+ * Every event names its chat by `chatRemoteId`; a message may arrive before any `chat` event
+ * for its chat (a new chat), which is why it carries the chat's kind itself.
+ */
+export type DeliveryEvent =
+  /** A chat appeared or changed (title, members). */
+  | { type: 'chat'; chat: DeliveryChat }
+  /** The user read the chat on another device: all but the newest `unreadCount` incoming messages are read. */
+  | { type: 'chat-read'; chatRemoteId: string; unreadCount: number }
+  /**
+   * Two chat ids turned out to be one chat (a network that addresses a person two ways, and
+   * told which ids belong together only later): everything stored under `from` moves to
+   * `into`. Message remote ids stay as they are. A no-op when nothing is stored under `from`.
+   */
+  | { type: 'chat-merged'; from: string; into: string }
+  /** The user deleted the chat on another device: it goes here too, with its messages. */
+  | { type: 'chat-deleted'; chatRemoteId: string }
+  /** The user cleared the chat's messages on another device; the chat itself stays. */
+  | { type: 'chat-cleared'; chatRemoteId: string }
+  /** What the network knows about a person changed (a name, a newly known address). */
+  | { type: 'peer'; peer: ChatPeer }
+  /**
+   * One message. `seq` orders it within its chat (a delivery network has no server sequence,
+   * so it is usually the send time). `seen` is whether the user has read it already.
+   */
+  | {
+      type: 'message';
+      chatRemoteId: string;
+      chatKind: ChatInfo['kind'];
+      message: ChatMessage;
+      seen: boolean;
+    }
+  /** A message was edited. Applies to a stored message only; an edit of one never stored is dropped. */
+  | { type: 'edit'; chatRemoteId: string; remoteId: string; text: string | null; editedAt: string | null }
+  /** A message was deleted (revoked for everyone, or deleted for the user on another device). */
+  | { type: 'delete'; chatRemoteId: string; remoteId: string }
+  /** The other side read these messages of the user. */
+  | { type: 'peer-read'; chatRemoteId: string; remoteIds: string[] };
+
+/**
+ * How long a delivery session runs.
+ *
+ * `catch-up` is `postbote sync`: connect, receive what was queued while nobody listened (and, on
+ * a freshly linked device, the history the network hands over once), and end when that is done.
+ * `follow` is a daemon: keep receiving until closed. Both go through the same receive path, so a
+ * daemon is `catch-up` that does not stop.
+ */
+export type DeliveryMode = 'catch-up' | 'follow';
+
+export interface DeliveryConnectOptions {
+  mode: DeliveryMode;
+}
+
+/** How a delivery session ended — reported, never hidden. */
+export interface DeliveryOutcome {
+  /** True when the session saw the network say its backlog was delivered; false when it gave up waiting. */
+  caughtUp: boolean;
+  /** A reason the session ended early (the network logged the device out, the connection dropped). */
+  error: string | null;
+}
+
+/** One connected delivery-only account. */
+export interface DeliverySession {
+  /**
+   * The next batch of events, in arrival order. Resolves null when the session is over: in
+   * `catch-up` mode once the backlog is delivered, in `follow` mode only after `close`.
+   *
+   * Delivery is at most once on these networks — the server forgets a message once this device
+   * acknowledged it — so the engine writes every batch before asking for the next one, and
+   * asking IS the acknowledgement: a session that journals what it received may drop the
+   * previous batch from its journal then, and must keep it when the session is closed without
+   * another call (the write failed).
+   */
+  nextBatch(): Promise<DeliveryEvent[] | null>;
+  /** How the session ended; meaningful once `nextBatch` resolved null. */
+  outcome(): DeliveryOutcome;
+  close(): Promise<void>;
+}
+
+/**
+ * The delivery sync driver: for networks without a server archive (WhatsApp, Signal), driven by
+ * `receiveDeliveries` in `@postbote/store`. What it writes is the only copy (`state`).
+ */
+export interface DeliveryBackend extends MessageBackend {
+  readonly kind: 'delivery';
+  connect(accountId: string, options: DeliveryConnectOptions): Promise<DeliverySession>;
+}
+
+/** Narrow a registry entry to the delivery driver. */
+export function isDeliveryBackend(backend: MessageBackend): backend is DeliveryBackend {
+  return backend.kind === 'delivery';
 }

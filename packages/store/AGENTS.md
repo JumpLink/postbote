@@ -6,8 +6,8 @@ layer and wins where they differ.
 
 ## The one rule that shapes this package
 
-**`store` must never import a backend** (`imap`, `telegram`). The sync engines are driven
-through the `MailBackend` and `ChatBackend` ports
+**`store` must never import a backend** (`imap`, `telegram`, `whatsapp`). The sync engines are driven
+through the `MailBackend`, `ChatBackend` and `DeliveryBackend` ports
 declared in `@postbote/protocol` and injected by `app`. That keeps this package free of `gi://`
 even transitively, which is the only reason `sync.ts` — the most intricate code in the project —
 can be unit-tested on Node against a fake backend and `:memory:`. If you want to reach into
@@ -67,6 +67,29 @@ expunge pass, and the only one. Do not narrow it.
 
 Chat bodies live on their `conversation_messages` row (`body`); mail bodies stay once in the
 FTS table.
+
+## Delivered chats are the only copy
+
+`receiveDeliveries` (the `delivery` driver's engine, `delivery-sync.ts`) writes the same chat
+tables as `syncChats` — `conversation_messages`, `chat_peers`, `chat_members`, a `chat_cursors`
+row per chat — so every read path, the rebuild and the participant link treat a delivered chat
+like an archived one. The difference is where the truth is: a delivery-only network (WhatsApp)
+forgets a message once this device acknowledged it, so these rows are `state`. Consequences:
+
+- Each batch is written in ONE transaction before the next is asked for; a failed write stops
+  the account instead of receiving more into nothing.
+- Edits, deletions, "clear chat", read state arrive as events and are applied in the batch —
+  there is no full scan to fall back on. A message re-delivered replaces its row.
+- A `chat-merged` event (one chat the network addressed two ways, e.g. a WhatsApp person by phone
+  number, then by LID) splits its batch: rows before it are written, the chat's rows are re-keyed
+  into the target in multi-row statements, then the rest — all in the batch's one transaction.
+- Asking the session for the next batch IS the acknowledgement that the previous one is
+  committed; a session with a write-ahead journal drops it then. Never call `nextBatch()` after
+  a failed write.
+- The rebuild must keep leaving chat rows alone (it deletes only `backend = 'mail'` rows). A
+  schema change that rewrites `conversation_messages` wholesale would destroy them.
+- Budget: a batch costs a fixed handful of statements plus its multi-row inserts (22 columns →
+  5 rows a statement). Edits of already-stored messages are the one per-item statement.
 
 ## Where data lives — the actual privacy guarantee
 

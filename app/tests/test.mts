@@ -27,8 +27,10 @@ import storeClassify from './unit/store/classify.test.ts';
 import storeThreads from './unit/store/threads.test.ts';
 import storeConversations from './unit/store/conversations.test.ts';
 import storeChatSync from './unit/store/chat-sync.test.ts';
+import storeDeliverySync from './unit/store/delivery-sync.test.ts';
 
 import telegram from './unit/telegram/telegram.test.ts';
+import whatsapp from './unit/whatsapp/whatsapp.test.ts';
 
 import date from './unit/core/date.test.ts';
 import limits from './unit/core/limits.test.ts';
@@ -60,7 +62,9 @@ run({
   storeThreads,
   storeConversations,
   storeChatSync,
+  storeDeliverySync,
   telegram,
+  whatsapp,
   date,
   limits,
   registry,

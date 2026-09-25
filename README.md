@@ -29,10 +29,15 @@ is built on, which is where this is headed.
 - **Telegram** (optional, off by default) — your direct chats, groups and
   channels in the same conversation view as mail, through Telegram's official
   API ([mtcute](https://github.com/mtcute/mtcute)). See [Telegram](#telegram).
+- **WhatsApp** (optional, off by default, **unofficial — risks your account**) —
+  your chats as a linked device through [Baileys](https://github.com/WhiskeySockets/Baileys).
+  See [WhatsApp](#whatsapp).
 
 Everything is **read-only**. Messages are fetched with IMAP `BODY.PEEK`, so
 opening a mail through Postbote never marks it as read. Telegram is read the
-same way: nothing is sent, edited, deleted or marked read.
+same way: nothing is sent, edited, deleted or marked read. WhatsApp too: no
+message, no read receipt, no online presence (see [WhatsApp](#whatsapp) for the
+one acknowledgement every linked device sends).
 
 ## Requirements
 
@@ -149,6 +154,68 @@ back it up like a password, never share it. A login killed halfway leaves a
 once it is 15 minutes old. Telegram lists it under *Settings → Devices* as `postbote`, where you can
 end it; deleting the file ends it on this machine.
 
+## WhatsApp
+
+> **Read this first.** WhatsApp has no API for reading your own chats. Postbote
+> uses [Baileys](https://github.com/WhiskeySockets/Baileys), an **unofficial**
+> reimplementation of the WhatsApp Web protocol. Using it **violates WhatsApp's
+> Terms of Service**, and WhatsApp bans accounts it sees using unofficial
+> clients — temporarily or for good. The ban hits your **phone number**. Enable
+> this only if you accept that risk for that number.
+
+Postbote joins your WhatsApp as a **linked device**, like WhatsApp Web:
+
+```bash
+postbote backends enable whatsapp --accept-terms   # shows the notice above once
+postbote accounts add whatsapp                     # QR code, or a pairing code
+postbote sync                                      # right away — see below
+postbote conversations list --people-only
+```
+
+`accounts add whatsapp` asks for a phone number. Leave it empty and a QR code
+appears in the terminal: on the phone, *WhatsApp → Settings → Linked devices →
+Link a device*, and scan it (a new code appears every ~20 s). Or type the number
+(international, `+49…`) and enter the 8-character pairing code it prints under
+*Link a device → Link with phone number instead*. The device shows up in that
+list as a browser session (Baileys' default, *Chrome (Mac OS)*); unlink it there
+to end it.
+
+**WhatsApp keeps no archive.** A message is gone from WhatsApp's servers once a
+device has received it, so what postbote stores is the **only copy** it has —
+its part of the index is irreplaceable, not a cache. Consequences:
+
+- **Run `postbote sync` right after linking.** The phone hands the recent
+  history (roughly the last months) to a new device once. `sync` connects,
+  receives that history and everything queued while no device of postbote was
+  connected, writes it, and disconnects once WhatsApp has nothing more to
+  hand over (it gives up waiting after ten minutes and says so). Set
+  `backends.whatsapp.settings.fullHistory: true` in the config **before**
+  linking to ask for the full history instead — larger, slower.
+- **Sync at least every two weeks.** WhatsApp unlinks a device that has not
+  connected for about 14 days; after that, `sync` reports the logout and you link
+  again (the conversations stay, under the same account id). A receiving daemon
+  that stays connected is planned; until then, `sync` from a timer.
+- **Back up the index** (`$XDG_DATA_HOME/postbote/index.db`) like the config:
+  with WhatsApp enabled it holds messages that exist nowhere else.
+
+Deletions and edits are applied as they arrive: a message the sender deleted
+for everyone, or you deleted or cleared on your phone, is removed from the index;
+an edited one gets the new text. Contacts are linked by phone number to your
+address book, like Telegram's.
+
+What postbote sends: nothing you could see. It connects with
+`markOnlineOnConnect: false`, so it announces itself *unavailable* (never online)
+and your phone keeps its notifications; it never sends a read receipt (the
+blue ticks stay yours). It does acknowledge each delivered message — the grey
+double tick every linked device sends, and the signal for WhatsApp to forget the
+message.
+
+The link leaves a **session file** at
+`$XDG_DATA_HOME/postbote/secrets/whatsapp/whatsapp-<LID>.db` (mode `0600`): the
+device's Signal keys. Whoever holds it can read your incoming WhatsApp messages —
+back it up like a password, never share it. The account id is your LID,
+WhatsApp's privacy id, never your phone number.
+
 ## As an MCP server
 
 `postbote mcp` speaks MCP over stdio. Registered in an MCP client it exposes
@@ -176,12 +243,14 @@ live in `$XDG_CONFIG_HOME/postbote/config.json` (mode `0600`, override with
 `POSTBOTE_CONFIG`). Unlike the index they cannot be rebuilt from a server, so
 back that file up.
 
-Chat sessions (Telegram) are **secrets**, kept apart from the index under
-`$XDG_DATA_HOME/postbote/secrets/` — the index can be rebuilt from the servers,
-a session cannot, and no command or MCP tool ever returns it.
+Chat sessions (Telegram, WhatsApp) are **secrets**, kept apart from the index
+under `$XDG_DATA_HOME/postbote/secrets/` — no command or MCP tool ever returns
+one. The index can be rebuilt from the servers **unless WhatsApp is enabled**:
+WhatsApp keeps no archive, so its messages in the index are the only copy
+(`postbote backends list` shows this as `storeTier: state`).
 
 Nothing is sent anywhere. Postbote talks to your mail server — and to Telegram
-if you enabled it — and to nothing else.
+and WhatsApp if you enabled them — and to nothing else.
 
 ## Development
 
