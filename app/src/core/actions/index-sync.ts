@@ -22,7 +22,7 @@ import {
   migrate,
   openIndexDb,
   probeFts5,
-  rebuildMailConversations,
+  rebuildConversations,
   searchIndex,
   syncIndex,
   syncStatus,
@@ -135,7 +135,7 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
     const contacts = await addressBook();
     // Sync and rebuild write in multi-row batches: gjsify's sqlite has a per-process budget of
     // executions (gjsify gap, unfixed, gjsify#1838 — see `insertMany`).
-    const conversations = rebuildMailConversations(db, { contacts: contacts ?? [] });
+    const conversations = rebuildConversations(db, { contacts: contacts ?? [] });
     const folders = results.flatMap((r) => r.folders);
     const errors = results.reduce((n, r) => n + r.errors, 0);
     return {

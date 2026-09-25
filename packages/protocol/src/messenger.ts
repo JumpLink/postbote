@@ -183,6 +183,15 @@ export type ClassificationReason =
   | 'no-reply-sender'
   /** Nobody known, no reply yet — held back until the user replies or adds the sender. */
   | 'unknown-sender'
+  /**
+   * Someone writing in a chat or group the user is in. A chat is a room the user joined or
+   * accepted, so a stranger in it is a person, not a mailing list — unlike an unknown mail sender.
+   */
+  | 'chat-member'
+  /** A one-way channel: the network itself marks it as broadcast, nobody can answer in it. */
+  | 'broadcast'
+  /** The network marks the sender as a bot. */
+  | 'bot'
   /** Written by the user. */
   | 'self';
 
@@ -238,6 +247,15 @@ export interface ConversationMessage {
   classification: Classification;
   classificationReason: ClassificationReason;
   ref: MessageRef;
+  /**
+   * Chat backends only (absent for mail): when the message was last edited, the network id of
+   * the message it replies to, the thread or topic it belongs to, and — for the user's own
+   * messages, on networks with read receipts — whether the other side has read it.
+   */
+  editedAt?: string | null;
+  replyToRemoteId?: string | null;
+  threadRemoteId?: string | null;
+  readByPeer?: boolean;
   /** Plain-text body — present only when explicitly requested. */
   bodyText?: string | null;
   bodyTruncated?: boolean;

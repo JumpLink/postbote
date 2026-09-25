@@ -1,9 +1,9 @@
 /**
- * Conversations, participants and their messages — derived from the mail index, read by the CLI
- * and MCP.
+ * Conversations, participants and their messages — mail threads derived from the mail index,
+ * chats written by `syncChats` — read by the CLI and MCP.
  *
- * `rebuildMailConversations` runs after a sync and rewrites the mail part of these tables in
- * one transaction. A full rebuild rather than an incremental update, on purpose: threading is a
+ * `rebuildConversations` runs after a sync and rewrites the mail part of these tables, the
+ * participant directory, and the chats' links into it, in one transaction. A full rebuild rather than an incremental update, on purpose: threading is a
  * union over the whole mailbox (a late reply can join two threads that were apart), and the
  * classification of one message depends on the rest of its thread (did the user reply?). An
  * incremental version would have to redo exactly that, with more ways to drift.
@@ -108,10 +108,18 @@ function loadMailRows(db: IndexDatabase): MailRow[] {
   }));
 }
 
+interface DirectoryEntry {
+  id: string;
+  name: string | null;
+  contactUid: string | null;
+}
+
 /** Participants keyed by address, merged through the address book. */
 class ParticipantDirectory {
-  readonly byAddress = new Map<string, { id: string; name: string | null; contactUid: string | null }>();
+  readonly byAddress = new Map<string, DirectoryEntry>();
   readonly addresses = new Map<string, ParticipantAddress[]>();
+  /** Entries with no address at all (a chat peer the network gave none); `byAddress` has the rest. */
+  private readonly unaddressed = new Map<string, DirectoryEntry>();
 
   constructor(contacts: readonly ContactDTO[]) {
     // A contact owns ALL its addresses up front, so mail from any of them lands on one person —
@@ -152,9 +160,44 @@ class ParticipantDirectory {
     return { id: entry.id, name: entry.name, email };
   }
 
-  participants(): Array<{ id: string; name: string | null; contactUid: string | null }> {
-    const seen = new Map<string, { id: string; name: string | null; contactUid: string | null }>();
-    for (const entry of this.byAddress.values()) if (!seen.has(entry.id)) seen.set(entry.id, entry);
+  /**
+   * The participant for a chat peer. An address someone already owns decides who it is — a
+   * contact's phone number first, so a Telegram user whose number is in the address book IS
+   * that contact, then any other (the same user seen from a second account). Every address of
+   * the peer is then claimed for that participant, unless another one already owns it.
+   */
+  resolvePeer(scope: string, peerId: string, name: string | null, addresses: ParticipantAddress[]): string {
+    const owners = addresses
+      .map((a) => this.byAddress.get(`${a.kind}:${a.value}`))
+      .filter((e): e is DirectoryEntry => e !== undefined);
+    let entry = owners.find((e) => e.contactUid !== null) ?? owners[0];
+    if (!entry) {
+      const first = addresses[0];
+      const id = first ? stableId('p-', first.kind, first.value) : stableId('p-', 'peer', scope, peerId);
+      entry = { id, name, contactUid: null };
+      if (!first) {
+        this.unaddressed.set(id, entry);
+        return id;
+      }
+    } else if (!entry.name && name) {
+      entry.name = name;
+    }
+    for (const address of addresses) {
+      const key = `${address.kind}:${address.value}`;
+      if (this.byAddress.has(key)) continue;
+      this.byAddress.set(key, entry);
+      const owned = this.addresses.get(entry.id) ?? [];
+      owned.push(address);
+      this.addresses.set(entry.id, owned);
+    }
+    return entry.id;
+  }
+
+  participants(): DirectoryEntry[] {
+    const seen = new Map<string, DirectoryEntry>();
+    for (const entry of [...this.byAddress.values(), ...this.unaddressed.values()]) {
+      if (!seen.has(entry.id)) seen.set(entry.id, entry);
+    }
     return [...seen.values()];
   }
 }
@@ -169,11 +212,52 @@ function selfAddressSet(db: IndexDatabase, extra: readonly string[]): Set<string
   return self;
 }
 
+interface ChatPeerRow {
+  backend: string;
+  accountId: string;
+  peerId: string;
+  name: string | null;
+  addresses: ParticipantAddress[];
+}
+
+function loadChatPeers(db: IndexDatabase): ChatPeerRow[] {
+  const rows = db
+    .prepare(
+      'SELECT backend, account_id, peer_id, display_name, addresses_json FROM chat_peers ORDER BY backend, account_id, peer_id',
+    )
+    .all() as Array<Record<string, unknown>>;
+  return rows.map((r) => {
+    let addresses: ParticipantAddress[] = [];
+    try {
+      const parsed = JSON.parse(String(r.addresses_json ?? '[]')) as unknown;
+      if (Array.isArray(parsed)) {
+        addresses = parsed.filter(
+          (a): a is ParticipantAddress => typeof a?.kind === 'string' && typeof a?.value === 'string',
+        );
+      }
+    } catch {
+      // Written with JSON.stringify by syncChats; a damaged row gets a participant without addresses.
+    }
+    return {
+      backend: String(r.backend),
+      accountId: String(r.account_id),
+      peerId: String(r.peer_id),
+      name: str(r.display_name),
+      addresses,
+    };
+  });
+}
+
 /**
- * Rewrite the mail conversations, their messages and the participant directory from the index.
+ * Rewrite the mail conversations, their messages and the participant directory from the index,
+ * and re-link the chat conversations to that directory.
+ *
+ * Chat messages themselves are not rewritten (`syncChats` writes them once; a chat history is
+ * too large to rebuild on every sync). Their links are: a set-based handful of statements, so a
+ * contact added to the address book turns a chat peer into that contact on the next sync.
  * Idempotent: running it twice yields the same rows and the same ids.
  */
-export function rebuildMailConversations(db: IndexDatabase, options: RebuildOptions = {}): RebuildResult {
+export function rebuildConversations(db: IndexDatabase, options: RebuildOptions = {}): RebuildResult {
   const rows = loadMailRows(db);
   const self = selfAddressSet(db, options.selfAddresses ?? []);
   const directory = new ParticipantDirectory(options.contacts ?? []);
@@ -271,6 +355,35 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
     for (const participantId of others) memberRows.push([conversationId, participantId]);
   }
 
+  // Chat peers join the same directory, after mail, so mail and chat meet at the address book.
+  const peerLinkRows: SqlValue[][] = [];
+  for (const peer of loadChatPeers(db)) {
+    const participantId = directory.resolvePeer(
+      `${peer.backend}\u0000${peer.accountId}`,
+      peer.peerId,
+      peer.name,
+      peer.addresses,
+    );
+    peerLinkRows.push([peer.backend, peer.accountId, peer.peerId, participantId]);
+  }
+
+  // Memberships are joined here, and written with REPLACE (two peers can resolve to one
+  // contact): libgda logs a warning for every insert that inserts nothing — an INSERT … SELECT
+  // of zero rows, an IGNORE that ignores — when it looks for the "last inserted row".
+  const linkOf = new Map(peerLinkRows.map((r) => [`${r[0]}\u0000${r[1]}\u0000${r[2]}`, r[3]]));
+  const chatMemberRows: SqlValue[][] = [];
+  if (peerLinkRows.length > 0) {
+    const members = db
+      .prepare('SELECT conversation_id, backend, account_id, peer_id FROM chat_members')
+      .all() as Array<Record<string, unknown>>;
+    for (const m of members) {
+      const participantId = linkOf.get(
+        `${String(m.backend)}\u0000${String(m.account_id)}\u0000${String(m.peer_id)}`,
+      );
+      if (participantId) chatMemberRows.push([String(m.conversation_id), participantId]);
+    }
+  }
+
   const participants = directory.participants();
   const participantRows = participants.map((p): SqlValue[] => [p.id, p.name, p.contactUid]);
   const addressRows = participants.flatMap((p) =>
@@ -283,10 +396,11 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
       'DELETE FROM conversation_participants WHERE conversation_id IN (SELECT id FROM conversations WHERE backend = ?)',
     ).run(MAIL_BACKEND);
     db.prepare('DELETE FROM conversations WHERE backend = ?').run(MAIL_BACKEND);
-    // The directory is rebuilt whole. Mail is its only writer today; when a chat backend adds
-    // participants of its own, this becomes a merge instead of a rewrite.
+    // The directory is rebuilt whole, from every source at once: the address book, the mail
+    // rows and the chat peers above.
     db.exec('DELETE FROM participant_addresses');
     db.exec('DELETE FROM participants');
+    db.exec('DELETE FROM chat_peer_links');
 
     insertMany(
       db,
@@ -310,6 +424,38 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
     );
     insertMany(db, 'INSERT INTO participants (id, display_name, contact_uid)', participantRows);
     insertMany(db, 'INSERT OR IGNORE INTO participant_addresses (participant_id, kind, value)', addressRows);
+    insertMany(
+      db,
+      'INSERT INTO chat_peer_links (backend, account_id, peer_id, participant_id)',
+      peerLinkRows,
+    );
+
+    // Chats: point every message and membership at the rebuilt directory. A chat conversation
+    // is one with a cursor — the store tells chat from mail by driver data, not by name.
+    // Skipped without chat peers: nothing to link.
+    if (peerLinkRows.length === 0) return;
+    db.exec(
+      `UPDATE conversation_messages SET sender_participant_id = (SELECT l.participant_id FROM chat_peer_links l
+         WHERE l.backend = conversation_messages.backend AND l.account_id = conversation_messages.account_id
+           AND l.peer_id = conversation_messages.sender_peer_id)
+       WHERE sender_peer_id IS NOT NULL`,
+    );
+    // A chat message from a contact is `known-contact`, from anyone else in the chat
+    // `chat-member`. Automated verdicts (broadcast, bot) are the network's own and stay.
+    db.exec(
+      `UPDATE conversation_messages SET classification_reason = CASE
+         WHEN sender_participant_id IN (SELECT id FROM participants WHERE contact_uid IS NOT NULL) THEN 'known-contact'
+         ELSE 'chat-member' END
+       WHERE sender_peer_id IS NOT NULL AND from_self = 0 AND classification = 'conversational'`,
+    );
+    db.exec(
+      'DELETE FROM conversation_participants WHERE conversation_id IN (SELECT conversation_id FROM chat_cursors)',
+    );
+    insertMany(
+      db,
+      'INSERT OR REPLACE INTO conversation_participants (conversation_id, participant_id)',
+      chatMemberRows,
+    );
   });
 
   return { conversations: threads.length, messages: messageRows.length, participants: participants.length };
@@ -520,8 +666,9 @@ export function getConversation(
     .prepare(
       `SELECT id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
               sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
-              classification, classification_reason, folder_path, uid, remote_id
-         FROM conversation_messages WHERE conversation_id = ? ORDER BY sent_at, id`,
+              classification, classification_reason, folder_path, uid, remote_id, remote_seq, body,
+              edited_at, reply_to_remote_id, thread_remote_id, peer_read
+         FROM conversation_messages WHERE conversation_id = ? ORDER BY sent_at, remote_seq, id`,
     )
     .all(id) as Array<Record<string, unknown>>;
 
@@ -555,8 +702,23 @@ export function getConversation(
         ...(r.remote_id ? { remoteId: String(r.remote_id) } : {}),
       },
     };
+    // Chat rows carry a sequence; their extra fields are set only for them, so a mail message
+    // looks exactly as it did before chats existed.
+    const chat = r.remote_seq !== null && r.remote_seq !== undefined;
+    if (chat) {
+      message.editedAt = str(r.edited_at);
+      message.replyToRemoteId = str(r.reply_to_remote_id);
+      message.threadRemoteId = str(r.thread_remote_id);
+      if (message.fromSelf) message.readByPeer = Number(r.peer_read) === 1;
+    }
     if (options.includeBodies) {
-      const body = folder && uid !== undefined ? messageBody(db, message.ref.accountId, folder, uid) : null;
+      // Mail keeps its body once, in the FTS table; a chat message keeps it on its own row.
+      const body =
+        folder && uid !== undefined
+          ? messageBody(db, message.ref.accountId, folder, uid)
+          : chat
+            ? str(r.body)
+            : null;
       const cap = options.maxBodyChars;
       message.bodyText = body !== null && cap !== undefined && body.length > cap ? body.slice(0, cap) : body;
       message.bodyTruncated = body !== null && cap !== undefined && body.length > cap;

@@ -514,7 +514,9 @@ export function syncStatus(db: IndexDatabase, maxAgeHours: number, now: Date): S
     .all(cutoff) as Array<Record<string, unknown>>;
   const range = db
     .prepare(
-      'SELECT MIN(last_sync_at) AS lo, MAX(last_sync_at) AS hi FROM folders WHERE last_sync_at IS NOT NULL',
+      // Chats count as synced sources too: an index with only chats in it is not "never synced".
+      `SELECT MIN(t) AS lo, MAX(t) AS hi FROM (SELECT last_sync_at AS t FROM folders
+         UNION ALL SELECT last_sync_at AS t FROM chat_cursors) WHERE t IS NOT NULL`,
     )
     .get() as { lo?: string | null; hi?: string | null } | undefined;
 
