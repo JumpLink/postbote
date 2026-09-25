@@ -66,6 +66,12 @@ scan re-takes each chat's newest window and removes the stored messages inside t
 window covers (`deletedBy`) plus every chat gone from the list — the chat counterpart of the
 expunge pass, and the only one. Do not narrow it.
 
+A network that reports deletions and edits IN its history (XMPP retractions and corrections,
+Matrix redactions and `m.replace`) hands them over on the page: `ChatHistoryPage.retracted`
+removes stored messages on every run, not only a full scan, and `ChatHistoryPage.edits` rewrites
+a stored body — after the inserts, so both also land on messages of the same batch. An edit that
+names its sender (`ChatEdit.senderRemoteId`, Matrix) only lands on a message by that sender.
+
 Chat bodies live on their `conversation_messages` row (`body`); mail bodies stay once in the
 FTS table.
 

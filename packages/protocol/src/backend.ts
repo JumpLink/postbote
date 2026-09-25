@@ -242,6 +242,13 @@ export interface ChatEdit {
   remoteId: string;
   text: string | null;
   editedAt: string | null;
+  /**
+   * Who made the edit, for networks where an edit is an event anyone could send (Matrix
+   * `m.replace`): the peer's `remoteId`, or null for the user. When set, the stored message only
+   * changes if it has that sender — someone else's "edit" of your message is not one. Left out
+   * (undefined) by networks that already bind a correction to its author (XMPP).
+   */
+  senderRemoteId?: string | null;
 }
 
 /** One connected chat account. Closed by the engine when it is done. */
@@ -265,7 +272,21 @@ export interface ChatSession {
     limit: number,
     afterCursor?: string | null,
   ): Promise<ChatHistoryPage>;
+  /**
+   * Changes to messages stored by EARLIER runs that this run learned about outside any history
+   * page — e.g. an encrypted message whose key arrived only now. Optional; called once per run,
+   * after every chat was fetched, so it also reaches chats with nothing new.
+   */
+  revisions?(): Promise<ChatRevision[]>;
   close(): Promise<void>;
+}
+
+/** Edits and deletions of one chat's stored messages, outside a history page. */
+export interface ChatRevision {
+  chatRemoteId: string;
+  edits?: ChatEdit[];
+  /** Stored messages that leave the index, by remote id — like `ChatHistoryPage.retracted`. */
+  retracted?: string[];
 }
 
 /** The chat sync driver: dialogs and per-chat sequences, driven by `syncChats` in `@postbote/store`. */

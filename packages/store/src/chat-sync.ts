@@ -28,6 +28,7 @@
 
 import type {
   ChatBackend,
+  ChatEdit,
   ChatHistoryPage,
   ChatInfo,
   ChatMessage,
@@ -150,7 +151,10 @@ class ChatBatch {
   readonly deletedMessages: string[] = [];
   /** Chat conversations whose chat is gone from the account. */
   readonly deletedConversations: string[] = [];
-  /** Corrections of messages stored by an earlier run: conversation, remote id, text, time. */
+  /**
+   * Corrections of stored messages: text, time, conversation, remote id — and, for an edit that
+   * names its sender, that sender twice (see `ChatEdit.senderRemoteId`; '' is the user).
+   */
   readonly edits: SqlValue[][] = [];
   /** Messages stored by an earlier run that the network reports retracted: row ids. */
   readonly retracted: string[] = [];
@@ -161,6 +165,12 @@ class ChatBatch {
   constructor(backend: string, accountId: string) {
     this.backend = backend;
     this.accountId = accountId;
+  }
+
+  edit(conversationId: string, edit: ChatEdit): void {
+    const row: SqlValue[] = [edit.text, edit.editedAt, conversationId, edit.remoteId];
+    if (edit.senderRemoteId !== undefined) row.push(edit.senderRemoteId ?? '', edit.senderRemoteId ?? '');
+    this.edits.push(row);
   }
 
   peer(peer: ChatPeer): void {
@@ -292,8 +302,11 @@ function writeBatch(db: IndexDatabase, batch: ChatBatch): void {
     // After the inserts, so a correction or retraction of a message written in this very batch
     // lands on it. Both are rare (one statement per edit is fine for the execution budget).
     for (const edit of batch.edits) {
+      // With a sender: the user's own message matches '', anyone else's its peer id.
+      const bySender =
+        edit.length > 4 ? ` AND ((from_self = 1 AND ? = '') OR (from_self = 0 AND sender_peer_id = ?))` : '';
       db.prepare(
-        'UPDATE conversation_messages SET body = ?, edited_at = ? WHERE conversation_id = ? AND remote_id = ?',
+        `UPDATE conversation_messages SET body = ?, edited_at = ? WHERE conversation_id = ? AND remote_id = ?${bySender}`,
       ).run(...edit);
     }
     deleteIn(db, (p) => `DELETE FROM conversation_messages WHERE id IN (${p})`, batch.retracted);
@@ -410,12 +423,11 @@ async function syncAccount(
       let lastSeq = cursor?.lastSeq ?? null;
       let lastCursor = cursor?.lastCursor ?? null;
       const collect = (page: ChatHistoryPage): void => {
-        for (const edit of page.edits ?? []) {
-          batch.edits.push([edit.text, edit.editedAt, conversationId, edit.remoteId]);
-        }
+        for (const edit of page.edits ?? []) batch.edit(conversationId, edit);
         for (const remoteId of page.retracted ?? []) {
           batch.retracted.push(stableId('m-', conversationId, remoteId));
         }
+        result.removed += page.retracted?.length ?? 0;
       };
       // A full scan re-takes the window only of a chat that is caught up; one with new messages
       // walks forward first, or everything between its cursor and the window would be skipped.
@@ -509,6 +521,19 @@ async function syncAccount(
       ]);
     }
     result.removed += batch.deletedConversations.length;
+
+    // Late news about messages stored earlier (a decryption key that arrived only now), for
+    // every chat — also the ones that had nothing new and were not fetched.
+    for (const revision of (await session.revisions?.()) ?? []) {
+      const conversationId = chatConversationId(name, account.id, revision.chatRemoteId);
+      if (!cursors.has(revision.chatRemoteId) && !chats.some((c) => c.remoteId === revision.chatRemoteId))
+        continue;
+      for (const remoteId of revision.retracted ?? []) {
+        batch.retracted.push(stableId('m-', conversationId, remoteId));
+      }
+      result.removed += revision.retracted?.length ?? 0;
+      for (const edit of revision.edits ?? []) batch.edit(conversationId, edit);
+    }
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
   } finally {
@@ -516,8 +541,11 @@ async function syncAccount(
     writeBatch(db, batch);
     try {
       await session.close();
-    } catch {
-      // A failed goodbye does not undo a finished sync.
+    } catch (err) {
+      // Loud, not swallowed: closing is where a backend persists its own secret state (Matrix's
+      // crypto store). What was written above stays; the account still reports the failure.
+      const message = `closing the session failed: ${err instanceof Error ? err.message : String(err)}`;
+      result.error = result.error ? `${result.error}; ${message}` : message;
     }
   }
   return result;

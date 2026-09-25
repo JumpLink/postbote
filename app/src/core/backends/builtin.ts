@@ -4,6 +4,7 @@
  */
 
 import { ImapBackend, MAIL_MANIFEST } from '@postbote/imap';
+import { MATRIX_MANIFEST, MatrixBackend } from '@postbote/matrix';
 import { TELEGRAM_MANIFEST, TelegramBackend } from '@postbote/telegram';
 import { WHATSAPP_MANIFEST, WhatsAppBackend } from '@postbote/whatsapp';
 import { XMPP_MANIFEST, XmppBackend } from '@postbote/xmpp';
@@ -14,6 +15,7 @@ export const BUILTIN_PLUGINS: readonly BackendPlugin[] = [
   { manifest: TELEGRAM_MANIFEST, create: (context) => new TelegramBackend(context) },
   { manifest: WHATSAPP_MANIFEST, create: (context) => new WhatsAppBackend(context) },
   { manifest: XMPP_MANIFEST, create: (context) => new XmppBackend(context) },
+  { manifest: MATRIX_MANIFEST, create: (context) => new MatrixBackend(context) },
 ];
 
 export function builtinRegistry(): BackendRegistry {

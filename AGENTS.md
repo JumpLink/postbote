@@ -32,9 +32,10 @@ SMTP, no flag write, no move, no delete.
 | `@postbote/telegram` | Telegram `chat` backend on mtcute (web build: WebSocket, WebCrypto, WASM), its session storage on `SecretStore`, the login | `protocol`, `store`, `@mtcute/*`, `node:*` — no `gi://` |
 | `@postbote/whatsapp` | WhatsApp `delivery` backend on Baileys (unofficial protocol: WebSocket, WASM, libsignal), its auth state on `SecretStore`, the QR / pairing-code link | `protocol`, `store`, `baileys`, `node:*` — no `gi://` |
 | `@postbote/xmpp` | XMPP `chat` backend on xmpp.js (composed by hand: domain-checked direct TLS, WebSocket, SCRAM), history from MAM only, the account file on `SecretStore`, the login. NEVER sends presence, markers or messages | `protocol`, `store`, `@xmpp/*`, `node:*` — no `gi://` |
+| `@postbote/matrix` | Matrix `chat` backend on matrix-js-sdk + the Rust crypto as WASM (`@matrix-org/matrix-sdk-crypto-wasm`), its crypto store as an in-memory IndexedDB snapshotted into `SecretStore`, the password login | `protocol`, `store`, `matrix-js-sdk`, `@matrix-org/*`, `fake-indexeddb`, `node:*` — no `gi://` |
 | `postbote-cli` (`app/`) | yargs CLI + MCP server, config file, backend registry | all of the above |
 
-**`store` must never import a backend** (`imap`, `telegram`, `xmpp`, …). The sync engines are driven
+**`store` must never import a backend** (`imap`, `telegram`, `xmpp`, `matrix`, …). The sync engines are driven
 through the driver ports declared in `protocol` (`MailBackend`, `ChatBackend`) and injected by
 `app`. That keeps `store` free of `gi://` and of any network library even transitively, which
 is the only reason the sync algorithms — the most intricate part of this project — can be
@@ -87,9 +88,9 @@ the MCP server via `run_in_background` when driving it.
 - Test fixtures are **synthetic only**. Never commit a real message, address, or mailbox name.
 - Credentials come from GOA per connection: never logged, never stored, never in a DTO.
 - Chat sessions (Telegram's auth key and the api_id/api_hash it was created with; WhatsApp's
-  Signal keys and device credentials) are the one secret postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
-- Chat sessions (Telegram's auth key, and the api_id/api_hash it was created with) and XMPP
-  passwords are the secrets postbote stores: one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
+  Signal keys and device credentials; Matrix's access token and the device's crypto store — Olm
+  account and every room key it received) and XMPP passwords are the secrets postbote stores:
+  one file per account under `$XDG_DATA_HOME/postbote/secrets/<backend>/`
   (created 0600 in 0700), through `SecretStore` — never in the index, never logged, never in a
   DTO or MCP output. Its backup tier is `secret`; the index stays `derived`.
 - **Delivery-only messages are `state`, not cache.** WhatsApp keeps no server archive: a
@@ -101,11 +102,22 @@ the MCP server via `run_in_background` when driving it.
   Baileys acknowledges a message BEFORE emitting it, so the receiver journals every event
   (fsync'ed, `secrets/whatsapp/<account>.journal`, 0600) before returning to Baileys, and replays
   a left-over journal first — never bypass it.
+- **Matrix is read-only through a gate, not through good intentions.** Every request of
+  matrix-js-sdk goes through `readOnlyFetch` (`packages/matrix/src/guard.ts`): GETs, login,
+  the sync filter and the E2EE key protocol pass; a `/sync` without `set_presence=offline`
+  (an omitted value means ONLINE) and everything else — receipts, typing, sends, joins — is
+  refused and fails the sync. Widen the allowlist only with a test naming the request.
+- **Matrix crypto state is saved before it is acknowledged.** The SDK's store checkpoints the
+  crypto snapshot in `setSyncData`, which the sync loop awaits before the next `/sync` — the
+  request that tells the server the to-device keys arrived. A save failure stops the run and
+  is reported; it is never swallowed.
 - **No secret in the config file** — it is `state`, plain text in every backup. `backends.<name>.
   settings` is for non-secret settings only; Telegram refuses an api_id/api_hash there.
-- Server-side deletions: the mailbox engine sees them every flag pass; the chat engine only on
-  `sync --full-scan` (Telegram reports deletions only as live updates); the delivery engine as
-  events (revoke, delete-for-me, clear/delete chat), applied in the batch they arrive in. Keep that pass working —
+- Server-side deletions: the mailbox engine sees them every flag pass; the chat engine on
+  `sync --full-scan` (Telegram reports deletions only as live updates) and on every sync for a
+  network that reports them in its history (XMPP retractions, Matrix redactions:
+  `ChatHistoryPage.retracted`); the delivery engine as events (revoke, delete-for-me,
+  clear/delete chat), applied in the batch they arrive in. Keep that pass working —
   a deleted message that stays MCP-readable is a privacy defect, not a staleness one.
 - Only `postbote sync` writes to the index. A search never does — one mental model, and no
   surprise disk growth from a read. User decisions (enabled backends, accepted terms,
