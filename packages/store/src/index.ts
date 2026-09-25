@@ -9,3 +9,6 @@ export * from './schema.ts';
 export * from './fts.ts';
 export * from './index-store.ts';
 export * from './sync.ts';
+export * from './classify.ts';
+export * from './threads.ts';
+export * from './conversations.ts';

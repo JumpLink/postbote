@@ -21,7 +21,7 @@
 
 import { type IndexDatabase, withTransaction } from './db.ts';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * The FTS5 DDL. Defined once so the baseline and any future rebuild cannot drift.
@@ -101,13 +101,96 @@ const STATEMENTS: readonly string[] = [
      updated INTEGER NOT NULL DEFAULT 0,
      removed INTEGER NOT NULL DEFAULT 0,
      error TEXT)`,
+
+  // ── conversations (v2) ─────────────────────────────────────────────
+  // Derived tables: `rebuildMailConversations` rewrites them from `messages` after each sync,
+  // so they never hold anything the mail rows do not. A delivery-only backend will write its
+  // own rows here directly, and at that point they become the only copy (ADR 0001 §2).
+
+  `CREATE TABLE IF NOT EXISTS participants (
+     id TEXT PRIMARY KEY,
+     display_name TEXT,
+     contact_uid TEXT)`,
+
+  // (kind, value) is the key: one address belongs to exactly one participant.
+  `CREATE TABLE IF NOT EXISTS participant_addresses (
+     participant_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     value TEXT NOT NULL,
+     PRIMARY KEY (kind, value))`,
+
+  `CREATE INDEX IF NOT EXISTS participant_addresses_owner ON participant_addresses (participant_id)`,
+
+  `CREATE TABLE IF NOT EXISTS conversations (
+     id TEXT PRIMARY KEY,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     kind TEXT NOT NULL,
+     title TEXT,
+     classification TEXT NOT NULL,
+     classification_reason TEXT NOT NULL,
+     first_message_at TEXT,
+     last_message_at TEXT,
+     message_count INTEGER NOT NULL DEFAULT 0,
+     unread_count INTEGER NOT NULL DEFAULT 0,
+     has_attachments INTEGER NOT NULL DEFAULT 0)`,
+
+  `CREATE INDEX IF NOT EXISTS conversations_last ON conversations (last_message_at DESC)`,
+
+  `CREATE TABLE IF NOT EXISTS conversation_participants (
+     conversation_id TEXT NOT NULL,
+     participant_id TEXT NOT NULL,
+     PRIMARY KEY (conversation_id, participant_id))`,
+
+  // `folder_path` + `uid` locate a mail message for `mail_get_message`; a chat backend leaves
+  // them null and will add its own locator column.
+  `CREATE TABLE IF NOT EXISTS conversation_messages (
+     id TEXT PRIMARY KEY,
+     conversation_id TEXT NOT NULL,
+     backend TEXT NOT NULL,
+     account_id TEXT NOT NULL,
+     presentation TEXT NOT NULL,
+     sender_participant_id TEXT,
+     sender_name TEXT,
+     sender_kind TEXT,
+     sender_address TEXT,
+     from_self INTEGER NOT NULL DEFAULT 0,
+     sent_at TEXT,
+     subject TEXT,
+     seen INTEGER NOT NULL DEFAULT 0,
+     has_attachments INTEGER NOT NULL DEFAULT 0,
+     classification TEXT NOT NULL,
+     classification_reason TEXT NOT NULL,
+     folder_path TEXT,
+     uid INTEGER)`,
+
+  `CREATE INDEX IF NOT EXISTS conversation_messages_conv ON conversation_messages (conversation_id, sent_at)`,
 ];
 
 /**
  * Per-version upgrade steps, applied in order for a database below SCHEMA_VERSION.
- * Empty at v1; the array exists so the first migration has an obvious home.
+ *
+ * A fresh database runs them too (it starts at version 0), so a column is added HERE and never
+ * in the `CREATE TABLE` above — declared in both places, the ALTER would fail on a new index.
  */
-const UPGRADES: Record<number, readonly string[]> = {};
+const UPGRADES: Record<number, readonly string[]> = {
+  // v2: what threading and classification read. Stored as fetched; the conversation tables
+  // are derived from them.
+  2: [
+    'ALTER TABLE messages ADD COLUMN in_reply_to TEXT',
+    'ALTER TABLE messages ADD COLUMN thread_refs TEXT',
+    'ALTER TABLE messages ADD COLUMN from_json TEXT',
+    'ALTER TABLE messages ADD COLUMN to_json TEXT',
+    'ALTER TABLE messages ADD COLUMN list_id TEXT',
+    'ALTER TABLE messages ADD COLUMN list_unsubscribe TEXT',
+    'ALTER TABLE messages ADD COLUMN auto_submitted TEXT',
+    'ALTER TABLE messages ADD COLUMN precedence TEXT',
+    // Rows indexed under v1 lack all of the above. The index is derived (server archive), so
+    // the honest fix is to fetch them again: resetting the cursors makes the next sync re-index
+    // every folder, and `upsertMessage` replaces each row in place.
+    'UPDATE folders SET last_uid = 0, uid_next = NULL, message_count = NULL',
+  ],
+};
 
 function readVersion(db: IndexDatabase): number {
   try {

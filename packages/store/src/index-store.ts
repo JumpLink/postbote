@@ -193,8 +193,9 @@ export function upsertMessage(
     db.prepare(
       `INSERT INTO messages
          (account_id, folder_path, uid, message_id, subject, sender, recipients, date, internal_date,
-          size, seen, flagged, has_attachment, indexed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          size, seen, flagged, has_attachment, indexed_at, in_reply_to, thread_refs, from_json, to_json,
+          list_id, list_unsubscribe, auto_submitted, precedence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       accountId,
       folderPath,
@@ -210,6 +211,16 @@ export function upsertMessage(
       message.flagged ? 1 : 0,
       message.hasAttachment ? 1 : 0,
       indexedAt,
+      message.inReplyTo,
+      // Space-joined: a Message-ID never contains whitespace, and one TEXT column keeps the
+      // row flat instead of adding a table that only the thread builder would ever read.
+      message.references.join(' '),
+      JSON.stringify(message.from),
+      JSON.stringify([...message.to, ...message.cc]),
+      message.automation.listId,
+      message.automation.listUnsubscribe,
+      message.automation.autoSubmitted,
+      message.automation.precedence,
     );
     const { id } = db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number };
     db.prepare(

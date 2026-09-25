@@ -38,6 +38,16 @@ Because of (b) the FTS table is maintained by application code, in the same tran
 `messages` write. That is better than a trigger anyway: an `AFTER UPDATE` trigger would fire on
 every `\Seen` change and rewrite the whole FTS row, body included.
 
+## Conversations are derived
+
+`conversations`, `conversation_messages`, `participants` and their link tables are rewritten
+from `messages` by `rebuildMailConversations` after every sync, in one transaction. Threading
+is a union over the whole mailbox and a message's class depends on its thread (did the user
+reply?), so a full rebuild is the simple correct form; ids are hashes of stable inputs, so they
+survive it. Per-sender overrides are NOT stored here — they come from the config and apply at
+read time, and `peopleOnlyClause` (SQL) must keep agreeing with `conversationVerdict` (JS);
+a test pins both directions.
+
 ## Where data lives — the actual privacy guarantee
 
 Nothing is ever written inside the repository. The index holds mail headers **and plain-text
