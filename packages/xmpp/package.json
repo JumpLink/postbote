@@ -1,0 +1,36 @@
+{
+  "name": "@postbote/xmpp",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "XMPP backend: the chat sync driver over xmpp.js — roster, bookmarked MUCs and their history through the server archive (MAM, XEP-0313), the password stored in postbote's SecretStore, and the interactive login. Read-only.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit --project tsconfig.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@postbote/protocol": "*",
+    "@postbote/store": "*",
+    "@xmpp/client-core": "0.14.0",
+    "@xmpp/iq": "0.14.0",
+    "@xmpp/jid": "0.14.0",
+    "@xmpp/middleware": "0.14.0",
+    "@xmpp/resource-binding": "0.14.0",
+    "@xmpp/sasl": "0.14.0",
+    "@xmpp/sasl-plain": "0.14.0",
+    "@xmpp/sasl-scram-sha-1": "0.14.0",
+    "@xmpp/starttls": "0.14.0",
+    "@xmpp/stream-features": "0.14.0",
+    "@xmpp/tcp": "0.14.0",
+    "@xmpp/tls": "0.14.0",
+    "@xmpp/websocket": "0.14.0",
+    "@xmpp/xml": "0.14.0",
+    "saslmechanisms": "0.1.1"
+  }
+}

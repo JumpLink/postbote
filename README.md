@@ -32,12 +32,17 @@ is built on, which is where this is headed.
 - **WhatsApp** (optional, off by default, **unofficial — risks your account**) —
   your chats as a linked device through [Baileys](https://github.com/WhiskeySockets/Baileys).
   See [WhatsApp](#whatsapp).
+- **XMPP / Jabber** (optional, off by default) — direct chats with your roster
+  and the rooms you joined, read from the server's message archive (MAM) through
+  [xmpp.js](https://github.com/xmppjs/xmpp.js). See [XMPP](#xmpp).
 
 Everything is **read-only**. Messages are fetched with IMAP `BODY.PEEK`, so
 opening a mail through Postbote never marks it as read. Telegram is read the
 same way: nothing is sent, edited, deleted or marked read. WhatsApp too: no
 message, no read receipt, no online presence (see [WhatsApp](#whatsapp) for the
-one acknowledgement every linked device sends).
+one acknowledgement every linked device sends). XMPP likewise — Postbote never
+sends a presence, so contacts do not see it online and your offline messages
+stay queued for your real clients.
 
 ## Requirements
 
@@ -216,6 +221,37 @@ device's Signal keys. Whoever holds it can read your incoming WhatsApp messages 
 back it up like a password, never share it. The account id is your LID,
 WhatsApp's privacy id, never your phone number.
 
+## XMPP
+
+Postbote reads XMPP history only from the server's **message archive** (MAM,
+XEP-0313), which Prosody (`mod_mam`, `mod_muc_mam`) and ejabberd offer. A server
+without one is refused with an explanation: the alternative, receiving offline
+messages, would take them away from your other clients.
+
+```bash
+postbote backends enable xmpp
+postbote accounts add xmpp        # JID, password (no echo), server address
+postbote sync
+```
+
+The server address may stay empty: Postbote then looks up direct TLS
+(`_xmpps-client._tcp` SRV, XEP-0368), then WebSocket (`host-meta`, XEP-0156),
+then STARTTLS. The certificate is checked against your XMPP domain. On the
+gjsify release Postbote currently runs on (0.49.0), TLS sockets do not work
+yet ([gjsify#1837](https://github.com/gjsify/gjsify/pull/1837)), so on GJS only
+the **WebSocket** endpoint is usable — give `wss://…` if discovery finds none.
+A server with its own CA: set `backends.xmpp.settings.tlsCaFile` to the PEM file.
+
+The login uses SCRAM-SHA-1 and sends a password in the clear (PLAIN) only inside
+TLS. The password is kept in
+`$XDG_DATA_HOME/postbote/secrets/xmpp/xmpp-<hash>.db` (`0600`), never in the
+config — a config that carries one is refused.
+
+Chats are your roster contacts and the bookmarked rooms you join automatically.
+Corrections (XEP-0308) replace the stored text, retractions (XEP-0424/0425)
+remove the message. OMEMO-encrypted messages are indexed without their text:
+Postbote cannot decrypt them yet.
+
 ## As an MCP server
 
 `postbote mcp` speaks MCP over stdio. Registered in an MCP client it exposes
@@ -243,14 +279,14 @@ live in `$XDG_CONFIG_HOME/postbote/config.json` (mode `0600`, override with
 `POSTBOTE_CONFIG`). Unlike the index they cannot be rebuilt from a server, so
 back that file up.
 
-Chat sessions (Telegram, WhatsApp) are **secrets**, kept apart from the index
-under `$XDG_DATA_HOME/postbote/secrets/` — no command or MCP tool ever returns
-one. The index can be rebuilt from the servers **unless WhatsApp is enabled**:
-WhatsApp keeps no archive, so its messages in the index are the only copy
-(`postbote backends list` shows this as `storeTier: state`).
+Chat sessions (Telegram, WhatsApp) and chat passwords (XMPP) are **secrets**,
+kept apart from the index under `$XDG_DATA_HOME/postbote/secrets/` — no command
+or MCP tool ever returns one. The index can be rebuilt from the servers **unless
+WhatsApp is enabled**: WhatsApp keeps no archive, so its messages in the index
+are the only copy (`postbote backends list` shows this as `storeTier: state`).
 
-Nothing is sent anywhere. Postbote talks to your mail server — and to Telegram
-and WhatsApp if you enabled them — and to nothing else.
+Nothing is sent anywhere. Postbote talks to your mail server — and to Telegram,
+WhatsApp or your XMPP server if you enabled them — and to nothing else.
 
 ## Development
 
