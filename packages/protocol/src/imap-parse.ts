@@ -85,6 +85,17 @@ function parseValue(s: string, pos: number, literals: string[]): { value: ImapVa
   // Atom: run until space or paren. Unquoted "NIL" means null.
   let atom = '';
   while (i < s.length && s[i] !== ' ' && s[i] !== ')' && s[i] !== '(' && s[i] !== PLACEHOLDER) {
+    // A FETCH section is part of its key even when it holds spaces and parens:
+    // `BODY[HEADER.FIELDS (REFERENCES LIST-ID)]` is ONE atom. Split at the space, it becomes
+    // three tokens and every later key/value pair of the response shifts by one.
+    if (s[i] === '[' && /^(BODY|BINARY)(\.PEEK)?$/i.test(atom)) {
+      const close = s.indexOf(']', i);
+      if (close > i) {
+        atom += s.slice(i, close + 1);
+        i = close + 1;
+        continue;
+      }
+    }
     atom += s[i];
     i++;
   }
@@ -127,6 +138,8 @@ export interface ParsedEnvelope {
   /** ISO-8601, or null if the Date header was absent/unparseable. */
   date: string | null;
   messageId: string | null;
+  /** The In-Reply-To field, verbatim (usually one `<id>`), or null. */
+  inReplyTo: string | null;
 }
 
 /**
@@ -144,6 +157,7 @@ export function parseEnvelope(env: ImapValue): ParsedEnvelope {
     to: toAddressList(a[5]),
     cc: toAddressList(a[6]),
     messageId: typeof a[9] === 'string' ? a[9] : null,
+    inReplyTo: typeof a[8] === 'string' && a[8].trim() ? a[8] : null,
   };
 }
 

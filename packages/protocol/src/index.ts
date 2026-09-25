@@ -16,5 +16,6 @@ export * from './search-plan.ts';
 export * from './bodystructure.ts';
 export * from './safe-filename.ts';
 export * from './backend.ts';
+export * from './mail-headers.ts';
 export * from './sink.ts';
 export * from './transfer-decode.ts';

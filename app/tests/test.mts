@@ -16,6 +16,7 @@ import searchPlan from './unit/protocol/search-plan.test.ts';
 import bodyStructure from './unit/protocol/bodystructure.test.ts';
 import safeFilename from './unit/protocol/safe-filename.test.ts';
 import transferDecode from './unit/protocol/transfer-decode.test.ts';
+import mailHeaders from './unit/protocol/mail-headers.test.ts';
 
 import storePaths from './unit/store/paths.test.ts';
 import storeDownload from './unit/store/download.test.ts';
@@ -41,6 +42,7 @@ run({
   bodyStructure,
   safeFilename,
   transferDecode,
+  mailHeaders,
   storePaths,
   storeDownload,
   storeFts,

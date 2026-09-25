@@ -40,8 +40,11 @@ function splitHeadersBody(raw: string): [string, string] {
   return [raw, ''];
 }
 
-/** Parse a header block (unfolding continuations) into a lowercased map. */
-function parseHeaders(block: string): Map<string, string> {
+/**
+ * Parse a header block (unfolding continuations) into a map keyed by lowercased name. A header
+ * that occurs more than once has its values joined with a newline.
+ */
+export function parseHeaders(block: string): Map<string, string> {
   const unfolded = block.replace(/\r?\n[ \t]+/g, ' ');
   const map = new Map<string, string>();
   for (const line of unfolded.split(/\r?\n/)) {
