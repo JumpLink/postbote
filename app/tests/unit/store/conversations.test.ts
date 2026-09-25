@@ -365,6 +365,39 @@ export default async () => {
       }
     });
 
+    await it('refuses an index from a newer postbote and leaves it untouched', async () => {
+      const db = freshDb();
+      try {
+        db.prepare(`UPDATE schema_meta SET value = ? WHERE key = 'schema_version'`).run(
+          String(SCHEMA_VERSION + 1),
+        );
+        expect(() => migrate(db)).toThrow(/only knows up to/);
+        const version = db.prepare(`SELECT value FROM schema_meta WHERE key = 'schema_version'`).get() as {
+          value: string;
+        };
+        // Writing our own, lower number here is what made the newer binary replay its upgrades.
+        expect(version.value).toBe(String(SCHEMA_VERSION + 1));
+      } finally {
+        db.close();
+      }
+    });
+
+    await it('replays the v2 upgrade safely after an old binary set the version back to 1', async () => {
+      // A released v1 binary has no too-new check: it opens a v2 index and records version 1.
+      // The next v2 open replays UPGRADES[2] against columns that already exist.
+      const db = freshDb();
+      try {
+        db.prepare(`UPDATE schema_meta SET value = '1' WHERE key = 'schema_version'`).run();
+        migrate(db);
+        const version = db.prepare(`SELECT value FROM schema_meta WHERE key = 'schema_version'`).get() as {
+          value: string;
+        };
+        expect(version.value).toBe(String(SCHEMA_VERSION));
+      } finally {
+        db.close();
+      }
+    });
+
     await it('migrating a current index again changes nothing', async () => {
       const db = freshDb();
       try {
