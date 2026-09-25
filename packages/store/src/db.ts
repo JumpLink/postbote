@@ -97,10 +97,12 @@ export const PARAM_BUDGET = 120;
  * `head VALUES (?, …), (?, …), …` in chunks of `budget` bound values. Every row must have the
  * same width. Call inside a transaction.
  *
- * Bulk writes go through here rather than one `run()` per row because every execution is a
- * leaked GWeakRef on gjsify's sqlite (gjsify gap, unfixed, gjsify fix/sqlite-weakref-leak):
- * about 65 000 executions per PROCESS — closing the connection does not reclaim them — and
- * every later SELECT returns []. Executions are the budget this package has to spend.
+ * Bulk writes go through here rather than one `run()` per row because of a gjsify gap
+ * (unfixed, gjsify#1838): libgda caches every executed statement per connection, each holding
+ * a GWeakRef on the SQLite provider, and that provider is shared by the whole PROCESS (GLib
+ * caps it at 65 535). A `run()` costs ~4 refs, so past ~16 000 of them in one process every
+ * SELECT — on any connection, a fresh one included — returns []. Executions are the budget
+ * this package has to spend, and a multi-row statement spends one.
  */
 export function insertMany(
   db: DatabaseSync,
