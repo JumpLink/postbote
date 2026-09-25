@@ -22,7 +22,8 @@
     "test": "gjsify test",
     "test:mcp": "node tests/integration/mcp-gjs-smoke.mjs",
     "test:telegram-network": "gjsify build tests/integration/telegram-handshake.ts --app gjs --outfile dist/telegram-handshake.gjs.mjs && gjsify run dist/telegram-handshake.gjs.mjs",
-    "test:whatsapp-network": "gjsify build tests/integration/whatsapp-qr.ts --app gjs --external jimp,sharp --outfile dist/whatsapp-qr.gjs.mjs && gjsify run dist/whatsapp-qr.gjs.mjs"
+    "test:whatsapp-network": "gjsify build tests/integration/whatsapp-qr.ts --app gjs --external jimp,sharp --outfile dist/whatsapp-qr.gjs.mjs && gjsify run dist/whatsapp-qr.gjs.mjs",
+    "test:xmpp-server": "node tests/integration/xmpp-archive.mjs"
   },
   "gjsify": {
     "excludeGlobals": [
