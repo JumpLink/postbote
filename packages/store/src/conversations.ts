@@ -25,7 +25,7 @@ import type {
 import { normalizeAddress } from '@postbote/protocol';
 import { classifyMail, conversationVerdict, type MessageVerdict, type SenderOverrides } from './classify.ts';
 import type { IndexDatabase } from './db.ts';
-import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
+import { insertMany, placeholders, seqColumn, type SqlValue, withTransaction } from './db.ts';
 import { messageBody } from './index-store.ts';
 import { buildThreads, normalizeSubject, stableId, type ThreadMember } from './threads.ts';
 
@@ -666,9 +666,10 @@ export function getConversation(
     .prepare(
       `SELECT id, conversation_id, backend, account_id, presentation, sender_participant_id, sender_name,
               sender_kind, sender_address, from_self, sent_at, subject, seen, has_attachments,
-              classification, classification_reason, folder_path, uid, remote_id, remote_seq, body,
+              classification, classification_reason, folder_path, uid, remote_id, ${seqColumn('remote_seq')}, body,
               edited_at, reply_to_remote_id, thread_remote_id, peer_read
-         FROM conversation_messages WHERE conversation_id = ? ORDER BY sent_at, remote_seq, id`,
+         FROM conversation_messages WHERE conversation_id = ?
+        ORDER BY sent_at, conversation_messages.remote_seq, id`,
     )
     .all(id) as Array<Record<string, unknown>>;
 

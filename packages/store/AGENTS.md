@@ -18,7 +18,7 @@ can be unit-tested on Node against a fake backend and `:memory:`. If you want to
 ## SQLite here is libgda, not sqlite3
 
 gjsify's `node:sqlite` is a **libgda 6.0 wrapper**. The API is `DatabaseSync`, so it looks like
-Node's, but five behaviours leak through and every one of them will bite you.
+Node's, but six behaviours leak through and every one of them will bite you.
 
 | # | Behaviour | What it forces |
 |---|---|---|
@@ -27,6 +27,7 @@ Node's, but five behaviours leak through and every one of them will bite you.
 | c | Parameters are **interpolated as escaped SQL literals**, not bound | Positional `?` only. The named path substitutes `:name` across the whole statement without excluding string literals. Do not store BLOBs. |
 | d | An FTS `SELECT` parses as `UNKNOWN`, so the wrapper tries `execute_non_select`, throws, and retries as a select | **Every FTS query runs twice.** Keep them narrow — `rowid` + `rank`, with a `LIMIT` — and hydrate the rows in a second, ordinary `SELECT`. |
 | e | libgda caches every executed statement per connection, and each holds a GWeakRef on the SQLite provider, which the whole PROCESS shares (GLib caps it at 65 535). A `run()` costs ~4 (it also selects `changes()` and `last_insert_rowid()`), so after ~16 000 of them in one process every SELECT returns `[]` on any connection, a fresh one included (see (a)). Measured: three connections of 10 000 `run()` each, each closed before the next, broke on the third, so closing connections did not keep a process under the limit. Gap unfixed in 0.49.0; the core fix is gjsify#1838 | **Count executions.** Bulk writes go through `insertMany` (multi-row, 120 bound values a statement; parse cost grows with the square of the parameter count) and set-based `uid IN (…)` chunks. Never one `run()` per message. The 6 000-message resync test in `sync.test.ts` fails on per-row writes. |
+| f | A declared `INTEGER` column is read as a **32-bit** int: one value above 2^31-1 (a millisecond timestamp) makes `get_value_at()` throw, and (a) turns that into an EMPTY result for the whole query. Gap unfixed in 0.49.0, gjsify#1839 | Read sequence columns through `seqColumn()` (`col \|\| ''`, converted back in JS). Writing and comparing them in SQL is fine. Never alias the text back over a column you also `ORDER BY` unqualified — the alias wins and sorts as text. |
 
 Two more, smaller:
 

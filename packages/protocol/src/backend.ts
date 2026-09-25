@@ -178,6 +178,12 @@ export interface ChatInfo {
   readInboxSeq: number | null;
   /** Everything the user sent at or below this sequence has been read by the other side. */
   readOutboxSeq: number | null;
+  /**
+   * The archive's opaque id of the newest entry, for networks that page their archive by id
+   * rather than by a number (XMPP MAM). When present — null for an empty chat — the engine
+   * decides "caught up" by comparing it with the cursor it stored, not by `lastSeq`.
+   */
+  lastCursor?: string | null;
 }
 
 /** One message in a chat. */
@@ -217,6 +223,25 @@ export interface ChatHistoryPage {
    * the range in which a stored message the page does not contain was deleted on the server.
    */
   reachedStart: boolean;
+  /**
+   * The archive's opaque id of the newest entry the page covered (the one `highestSeq` names),
+   * for networks that page by id. Stored with the cursor and handed back as `afterCursor`.
+   */
+  highestCursor?: string | null;
+  /** Earlier messages this page corrects (the network's edit message), by their remote id. */
+  edits?: ChatEdit[];
+  /**
+   * Earlier messages this page retracts or a moderator removed, by remote id: they leave the
+   * index. A message retracted inside the same page is simply not in `messages`.
+   */
+  retracted?: string[];
+}
+
+/** A correction of a message synced earlier: its new text replaces the stored one. */
+export interface ChatEdit {
+  remoteId: string;
+  text: string | null;
+  editedAt: string | null;
 }
 
 /** One connected chat account. Closed by the engine when it is done. */
@@ -230,8 +255,16 @@ export interface ChatSession {
    * not its whole past. With a number: the oldest `limit` messages strictly newer than it, so
    * repeated calls walk forward without a gap. Implementations must never return a message at
    * or below `afterSeq`.
+   *
+   * `afterCursor` is the `highestCursor` of the page that ended at `afterSeq`, for networks that
+   * page their archive by id; the others ignore it.
    */
-  fetchHistory(chatRemoteId: string, afterSeq: number | null, limit: number): Promise<ChatHistoryPage>;
+  fetchHistory(
+    chatRemoteId: string,
+    afterSeq: number | null,
+    limit: number,
+    afterCursor?: string | null,
+  ): Promise<ChatHistoryPage>;
   close(): Promise<void>;
 }
 

@@ -37,7 +37,7 @@ import type {
   ClassificationReason,
 } from '@postbote/protocol';
 import type { IndexDatabase } from './db.ts';
-import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
+import { insertMany, placeholders, seqColumn, type SqlValue, withTransaction } from './db.ts';
 import { upsertAccount } from './index-store.ts';
 import { stableId } from './threads.ts';
 
@@ -90,6 +90,8 @@ const DEFAULT_PAGE = 100;
 
 interface Cursor {
   lastSeq: number | null;
+  /** The archive's own id at `lastSeq`, for networks that page by id (null for the others). */
+  lastCursor: string | null;
   readInboxSeq: number | null;
   readOutboxSeq: number | null;
 }
@@ -101,7 +103,8 @@ function num(value: unknown): number | null {
 function loadCursors(db: IndexDatabase, backend: string, accountId: string): Map<string, Cursor> {
   const rows = db
     .prepare(
-      'SELECT chat_id, last_seq, read_inbox_seq, read_outbox_seq FROM chat_cursors WHERE backend = ? AND account_id = ?',
+      `SELECT chat_id, ${seqColumn('last_seq')}, last_cursor, ${seqColumn('read_inbox_seq')}, ${seqColumn('read_outbox_seq')}
+         FROM chat_cursors WHERE backend = ? AND account_id = ?`,
     )
     .all(backend, accountId) as Array<Record<string, unknown>>;
   return new Map(
@@ -109,6 +112,7 @@ function loadCursors(db: IndexDatabase, backend: string, accountId: string): Map
       String(r.chat_id),
       {
         lastSeq: num(r.last_seq),
+        lastCursor: r.last_cursor === null || r.last_cursor === undefined ? null : String(r.last_cursor),
         readInboxSeq: num(r.read_inbox_seq),
         readOutboxSeq: num(r.read_outbox_seq),
       },
@@ -146,6 +150,10 @@ class ChatBatch {
   readonly deletedMessages: string[] = [];
   /** Chat conversations whose chat is gone from the account. */
   readonly deletedConversations: string[] = [];
+  /** Corrections of messages stored by an earlier run: conversation, remote id, text, time. */
+  readonly edits: SqlValue[][] = [];
+  /** Messages stored by an earlier run that the network reports retracted: row ids. */
+  readonly retracted: string[] = [];
 
   readonly backend: string;
   readonly accountId: string;
@@ -203,7 +211,8 @@ function loadStoredSeqs(
 ): Map<string, Array<{ id: string; seq: number }>> {
   const rows = db
     .prepare(
-      'SELECT id, conversation_id, remote_seq FROM conversation_messages WHERE backend = ? AND account_id = ? AND remote_seq IS NOT NULL',
+      `SELECT id, conversation_id, ${seqColumn('remote_seq')} FROM conversation_messages
+         WHERE backend = ? AND account_id = ? AND remote_seq IS NOT NULL`,
     )
     .all(backend, accountId) as Array<Record<string, unknown>>;
   const result = new Map<string, Array<{ id: string; seq: number }>>();
@@ -276,9 +285,18 @@ function writeBatch(db: IndexDatabase, batch: ChatBatch): void {
     insertMany(
       db,
       `INSERT OR REPLACE INTO chat_cursors
-         (conversation_id, backend, account_id, chat_id, kind, last_seq, read_inbox_seq, read_outbox_seq, last_sync_at)`,
+         (conversation_id, backend, account_id, chat_id, kind, last_seq, read_inbox_seq, read_outbox_seq, last_sync_at,
+          last_cursor)`,
       batch.cursors,
     );
+    // After the inserts, so a correction or retraction of a message written in this very batch
+    // lands on it. Both are rare (one statement per edit is fine for the execution budget).
+    for (const edit of batch.edits) {
+      db.prepare(
+        'UPDATE conversation_messages SET body = ?, edited_at = ? WHERE conversation_id = ? AND remote_id = ?',
+      ).run(...edit);
+    }
+    deleteIn(db, (p) => `DELETE FROM conversation_messages WHERE id IN (${p})`, batch.retracted);
     // Read state and the conversation aggregates, set-based: two executions per account however
     // many chats changed. `seen` for the user's own messages is always 1; for the others it is
     // the network's read marker, which moves without any new message arriving.
@@ -383,9 +401,22 @@ async function syncAccount(
     for (const chat of chats) {
       const conversationId = chatConversationId(name, account.id, chat.remoteId);
       const cursor = cursors.get(chat.remoteId);
+      // A network that pages by archive id reports its newest id: caught up means we stored it.
       const caughtUp =
-        cursor !== undefined && (chat.lastSeq === null || (cursor.lastSeq ?? -1) >= chat.lastSeq);
+        cursor !== undefined &&
+        (chat.lastCursor !== undefined
+          ? chat.lastCursor === null || cursor.lastCursor === chat.lastCursor
+          : chat.lastSeq === null || (cursor.lastSeq ?? -1) >= chat.lastSeq);
       let lastSeq = cursor?.lastSeq ?? null;
+      let lastCursor = cursor?.lastCursor ?? null;
+      const collect = (page: ChatHistoryPage): void => {
+        for (const edit of page.edits ?? []) {
+          batch.edits.push([edit.text, edit.editedAt, conversationId, edit.remoteId]);
+        }
+        for (const remoteId of page.retracted ?? []) {
+          batch.retracted.push(stableId('m-', conversationId, remoteId));
+        }
+      };
       // A full scan re-takes the window only of a chat that is caught up; one with new messages
       // walks forward first, or everything between its cursor and the window would be skipped.
       const windowed = lastSeq === null || (options.fullScan && caughtUp);
@@ -408,7 +439,11 @@ async function syncAccount(
             if (limit > 0) {
               const page = await session.fetchHistory(chat.remoteId, null, limit);
               fetched.push(...page.messages);
-              if (page.highestSeq !== null) lastSeq = Math.max(lastSeq ?? -1, page.highestSeq);
+              collect(page);
+              if (page.highestSeq !== null && page.highestSeq >= (lastSeq ?? -1)) {
+                lastSeq = page.highestSeq;
+                lastCursor = page.highestCursor ?? null;
+              }
               if (stored && cursor) {
                 const gone = deletedBy(page, stored.get(conversationId) ?? []);
                 batch.deletedMessages.push(...gone);
@@ -422,10 +457,13 @@ async function syncAccount(
                 budget.exhausted = true;
                 break;
               }
-              const page = await session.fetchHistory(chat.remoteId, lastSeq, limit);
+              const page = await session.fetchHistory(chat.remoteId, lastSeq, limit, lastCursor);
               fetched.push(...page.messages.filter((m) => lastSeq === null || m.seq > lastSeq));
-              if (page.highestSeq !== null && page.highestSeq > (lastSeq ?? -1)) lastSeq = page.highestSeq;
-              else break;
+              collect(page);
+              if (page.highestSeq !== null && page.highestSeq > (lastSeq ?? -1)) {
+                lastSeq = page.highestSeq;
+                lastCursor = page.highestCursor ?? null;
+              } else break;
               if (page.exhausted) break;
             }
           }
@@ -467,6 +505,7 @@ async function syncAccount(
         chat.readInboxSeq,
         chat.readOutboxSeq,
         syncedAt,
+        lastCursor,
       ]);
     }
     result.removed += batch.deletedConversations.length;
