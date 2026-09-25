@@ -25,7 +25,7 @@ import type {
 import { normalizeAddress } from '@postbote/protocol';
 import { classifyMail, conversationVerdict, type MessageVerdict, type SenderOverrides } from './classify.ts';
 import type { IndexDatabase } from './db.ts';
-import { withTransaction } from './db.ts';
+import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
 import { messageBody } from './index-store.ts';
 import { buildThreads, normalizeSubject, stableId, type ThreadMember } from './threads.ts';
 
@@ -315,27 +315,6 @@ export function rebuildMailConversations(db: IndexDatabase, options: RebuildOpti
   return { conversations: threads.length, messages: messageRows.length, participants: participants.length };
 }
 
-type SqlValue = string | number | null;
-
-/**
- * Bound values per multi-row INSERT. Measured, not guessed: gjsify's libgda binding costs
- * roughly the square of the parameter count per statement, while each execution has a fixed
- * cost of its own. Rebuilding 3 000 messages on GJS took 23 s one row per statement, 9.4 s at
- * 20 values, 3.7 s at 60, 4.9 s at 150 and 10.3 s at 400.
- */
-const PARAM_BUDGET = 60;
-
-/** `head VALUES (?, …), (?, …), …` in chunks. Every row must have the same width. */
-function insertMany(db: IndexDatabase, head: string, rows: readonly SqlValue[][]): void {
-  if (rows.length === 0) return;
-  const perChunk = Math.max(1, Math.floor(PARAM_BUDGET / rows[0].length));
-  for (let i = 0; i < rows.length; i += perChunk) {
-    const chunk = rows.slice(i, i + perChunk);
-    const tuple = `(${placeholders(chunk[0].length)})`;
-    db.prepare(`${head} VALUES ${chunk.map(() => tuple).join(', ')}`).run(...chunk.flat());
-  }
-}
-
 // ── reads ──────────────────────────────────────────────────────────────
 
 export interface ConversationQuery {
@@ -349,10 +328,6 @@ export interface ConversationQuery {
 }
 
 const DEFAULT_LIST_LIMIT = 50;
-
-function placeholders(n: number): string {
-  return Array.from({ length: n }, () => '?').join(', ');
-}
 
 /**
  * The SQL twin of `conversationVerdict`: a conversation is conversational when no one else

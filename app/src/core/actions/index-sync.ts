@@ -113,10 +113,9 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
       'no backend is enabled — `postbote backends list` shows them, `backends enable <name>` turns one on',
     );
   }
-  const path = params.dbPath ?? indexDbPath();
-  const results: SyncResult[] = [];
-  const db = openIndex(path);
+  const db = openIndex(params.dbPath ?? indexDbPath());
   try {
+    const results: SyncResult[] = [];
     for (const plugin of plugins) {
       const backend = plugin.create();
       // The engine is chosen by the driver the backend implements, never by its name.
@@ -133,20 +132,10 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
         }),
       );
     }
-  } finally {
-    db.close();
-  }
-
-  const contacts = await addressBook();
-  // gjsify gap (unfixed, not yet filed): @gjsify/sqlite 0.49.0 leaks a GWeakRef on the
-  // connection per execution (`run()` also runs `SELECT changes()` and `last_insert_rowid()`).
-  // 25 000 single-row INSERTs on one connection overflow GObject's per-object limit ("Too many
-  // GWeakRef registered"); from then on every SELECT on it returns [] because all()/get()
-  // swallow the error. System.gc() does not release them; a fresh connection is unaffected.
-  // A first sync of a ~5 000-message mailbox gets there, so the rebuild gets its own connection.
-  const fresh = openIndex(path);
-  try {
-    const conversations = rebuildMailConversations(fresh, { contacts: contacts ?? [] });
+    const contacts = await addressBook();
+    // Sync and rebuild write in multi-row batches: gjsify's sqlite has a per-process budget of
+    // executions (gjsify gap, unfixed, gjsify fix/sqlite-weakref-leak — see `insertMany`).
+    const conversations = rebuildMailConversations(db, { contacts: contacts ?? [] });
     const folders = results.flatMap((r) => r.folders);
     const errors = results.reduce((n, r) => n + r.errors, 0);
     return {
@@ -160,7 +149,7 @@ export async function indexSync(params: SyncParams = {}): Promise<IndexSyncResul
       conversations: { ...conversations, contacts: contacts?.length ?? null },
     };
   } finally {
-    fresh.close();
+    db.close();
   }
 }
 

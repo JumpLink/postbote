@@ -75,3 +75,44 @@ export function probeFts5(db: DatabaseSync): void {
     db.exec('DROP TABLE IF EXISTS fts_probe');
   }
 }
+
+export type SqlValue = string | number | null;
+
+/** `?, ?, …` — n positional placeholders. */
+export function placeholders(n: number): string {
+  return Array.from({ length: n }, () => '?').join(', ');
+}
+
+/**
+ * Bound values per multi-row INSERT. Measured, not guessed: gjsify's libgda wrapper re-parses
+ * the statement per execution at a cost that grows roughly with the square of its parameter
+ * count, while each execution has a fixed cost of its own. Rebuilding 3 000 conversations on
+ * GJS took 23 s one row per statement, 9.4 s at 20 values, 3.7 s at 60, 4.9 s at 150 and
+ * 10.3 s at 400. 120 is a little slower than the optimum and spends half the executions,
+ * which are the scarcer resource (see `insertMany`).
+ */
+export const PARAM_BUDGET = 120;
+
+/**
+ * `head VALUES (?, …), (?, …), …` in chunks of `budget` bound values. Every row must have the
+ * same width. Call inside a transaction.
+ *
+ * Bulk writes go through here rather than one `run()` per row because every execution is a
+ * leaked GWeakRef on gjsify's sqlite (gjsify gap, unfixed, gjsify fix/sqlite-weakref-leak):
+ * about 65 000 executions per PROCESS — closing the connection does not reclaim them — and
+ * every later SELECT returns []. Executions are the budget this package has to spend.
+ */
+export function insertMany(
+  db: DatabaseSync,
+  head: string,
+  rows: readonly SqlValue[][],
+  budget = PARAM_BUDGET,
+): void {
+  if (rows.length === 0) return;
+  const perChunk = Math.max(1, Math.floor(budget / rows[0].length));
+  for (let i = 0; i < rows.length; i += perChunk) {
+    const chunk = rows.slice(i, i + perChunk);
+    const tuple = `(${placeholders(chunk[0].length)})`;
+    db.prepare(`${head} VALUES ${chunk.map(() => tuple).join(', ')}`).run(...chunk.flat());
+  }
+}

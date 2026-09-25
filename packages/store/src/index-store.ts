@@ -10,9 +10,9 @@
  * disk growth from a read.
  */
 
-import type { BackendMessage } from '@postbote/protocol';
+import type { BackendFlagState, BackendMessage } from '@postbote/protocol';
 import type { IndexDatabase } from './db.ts';
-import { withTransaction } from './db.ts';
+import { insertMany, placeholders, type SqlValue, withTransaction } from './db.ts';
 import { toFts5Match } from './fts.ts';
 
 /** A message as the index knows it. */
@@ -154,26 +154,159 @@ export function setFolderCursor(
  * index holds now refers to a different message, or to none.
  */
 export function clearFolder(db: IndexDatabase, accountId: string, folderPath: string): number {
+  // Set-based: three statements whatever the folder size. Per-row deletes cost ~6 executions
+  // a message, and on gjsify's sqlite every execution is a leaked GWeakRef (see connection.ts);
+  // a 10 000-message folder alone would break the connection.
   return withTransaction(db, () => {
-    const ids = db
-      .prepare('SELECT id FROM messages WHERE account_id = ? AND folder_path = ?')
-      .all(accountId, folderPath) as Array<{ id: number }>;
-    for (const { id } of ids) {
-      db.prepare('DELETE FROM messages_fts WHERE rowid = ?').run(id);
-      db.prepare('DELETE FROM attachments WHERE message_id = ?').run(id);
-    }
+    const { n } = db
+      .prepare('SELECT COUNT(*) AS n FROM messages WHERE account_id = ? AND folder_path = ?')
+      .get(accountId, folderPath) as { n: number };
+    const owned = 'SELECT id FROM messages WHERE account_id = ? AND folder_path = ?';
+    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (${owned})`).run(accountId, folderPath);
+    db.prepare(`DELETE FROM attachments WHERE message_id IN (${owned})`).run(accountId, folderPath);
     db.prepare('DELETE FROM messages WHERE account_id = ? AND folder_path = ?').run(accountId, folderPath);
-    return ids.length;
+    return Number(n);
   });
 }
 
+/** UIDs per `uid IN (…)` statement: bounded, because the wrapper's parse cost grows with it. */
+const UID_CHUNK = 200;
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Delete the rows (and their FTS and attachment rows) of these UIDs. No transaction of its own. */
+function deleteUids(
+  db: IndexDatabase,
+  accountId: string,
+  folderPath: string,
+  uids: readonly number[],
+): number {
+  let removed = 0;
+  for (const chunk of chunks(uids, UID_CHUNK)) {
+    const owned = `SELECT id FROM messages WHERE account_id = ? AND folder_path = ? AND uid IN (${placeholders(chunk.length)})`;
+    const params = [accountId, folderPath, ...chunk];
+    const { n } = db.prepare(`SELECT COUNT(*) AS n FROM (${owned})`).get(...params) as { n: number };
+    if (Number(n) === 0) continue;
+    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (${owned})`).run(...params);
+    db.prepare(`DELETE FROM attachments WHERE message_id IN (${owned})`).run(...params);
+    db.prepare(`DELETE FROM messages WHERE id IN (${owned})`).run(...params);
+    removed += Number(n);
+  }
+  return removed;
+}
+
 /**
- * Insert or replace one message and its searchable text, in ONE transaction.
+ * Insert or replace a batch of messages and their searchable text, in ONE transaction.
  *
  * The FTS row is written here rather than by a trigger because the wrapper's `exec()` cannot
  * carry a `BEGIN … END` trigger body — and because a trigger would rewrite the entire FTS row,
  * body included, on every `\Seen` toggle.
+ *
+ * Batched into multi-row statements because executions are what gjsify's sqlite runs out of
+ * (see `insertMany`): one message at a time cost ~15 executions, and a full sync of a 5 000
+ * message folder broke the process's index connection before it finished. This is ~2.
  */
+export function upsertMessages(
+  db: IndexDatabase,
+  accountId: string,
+  folderPath: string,
+  messages: readonly BackendMessage[],
+  indexedAt: string,
+): void {
+  if (messages.length === 0) return;
+  withTransaction(db, () => {
+    deleteUids(
+      db,
+      accountId,
+      folderPath,
+      messages.map((m) => m.uid),
+    );
+    insertMany(
+      db,
+      `INSERT INTO messages
+         (account_id, folder_path, uid, message_id, subject, sender, recipients, date, internal_date,
+          size, seen, flagged, has_attachment, indexed_at, in_reply_to, thread_refs, from_json, to_json,
+          list_id, list_unsubscribe, auto_submitted, precedence)`,
+      messages.map((message): SqlValue[] => [
+        accountId,
+        folderPath,
+        message.uid,
+        message.messageId,
+        message.subject,
+        message.sender,
+        message.recipients,
+        message.date,
+        message.internalDate,
+        message.size,
+        message.seen ? 1 : 0,
+        message.flagged ? 1 : 0,
+        message.hasAttachment ? 1 : 0,
+        indexedAt,
+        message.inReplyTo,
+        // Space-joined: a Message-ID never contains whitespace, and one TEXT column keeps the
+        // row flat instead of adding a table that only the thread builder would ever read.
+        message.references.join(' '),
+        JSON.stringify(message.from),
+        JSON.stringify([...message.to, ...message.cc]),
+        message.automation.listId,
+        message.automation.listUnsubscribe,
+        message.automation.autoSubmitted,
+        message.automation.precedence,
+      ]),
+    );
+
+    const ids = new Map<number, number>();
+    for (const chunk of chunks(
+      messages.map((m) => m.uid),
+      UID_CHUNK,
+    )) {
+      const rows = db
+        .prepare(
+          `SELECT id, uid FROM messages WHERE account_id = ? AND folder_path = ? AND uid IN (${placeholders(chunk.length)})`,
+        )
+        .all(accountId, folderPath, ...chunk) as Array<{ id: number; uid: number }>;
+      for (const row of rows) ids.set(Number(row.uid), Number(row.id));
+    }
+    // A row that is not there now was not written. Fail the batch loudly rather than index a
+    // message without its searchable text — `all()` swallowing an error lands here too.
+    if (ids.size !== new Set(messages.map((m) => m.uid)).size) {
+      throw new Error(
+        `indexed ${ids.size} of ${messages.length} messages in ${folderPath}; the batch was rolled back`,
+      );
+    }
+
+    insertMany(
+      db,
+      'INSERT INTO messages_fts (rowid, subject, sender, recipients, body)',
+      messages.map((m): SqlValue[] => [
+        ids.get(m.uid) as number,
+        m.subject ?? '',
+        m.sender,
+        m.recipients,
+        m.bodyText ?? '',
+      ]),
+    );
+    insertMany(
+      db,
+      'INSERT OR REPLACE INTO attachments (message_id, section, filename, mime_type, size)',
+      messages.flatMap((m) =>
+        m.attachments.map((att): SqlValue[] => [
+          ids.get(m.uid) as number,
+          att.section,
+          att.filename,
+          att.mimeType,
+          att.size,
+        ]),
+      ),
+    );
+  });
+}
+
+/** Insert or replace one message. See `upsertMessages`, which the sync engine uses. */
 export function upsertMessage(
   db: IndexDatabase,
   accountId: string,
@@ -181,57 +314,7 @@ export function upsertMessage(
   message: BackendMessage,
   indexedAt: string,
 ): void {
-  withTransaction(db, () => {
-    const existing = db
-      .prepare('SELECT id FROM messages WHERE account_id = ? AND folder_path = ? AND uid = ?')
-      .get(accountId, folderPath, message.uid) as { id?: number } | undefined;
-    if (existing?.id !== undefined) {
-      db.prepare('DELETE FROM messages_fts WHERE rowid = ?').run(existing.id);
-      db.prepare('DELETE FROM attachments WHERE message_id = ?').run(existing.id);
-      db.prepare('DELETE FROM messages WHERE id = ?').run(existing.id);
-    }
-    db.prepare(
-      `INSERT INTO messages
-         (account_id, folder_path, uid, message_id, subject, sender, recipients, date, internal_date,
-          size, seen, flagged, has_attachment, indexed_at, in_reply_to, thread_refs, from_json, to_json,
-          list_id, list_unsubscribe, auto_submitted, precedence)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      accountId,
-      folderPath,
-      message.uid,
-      message.messageId,
-      message.subject,
-      message.sender,
-      message.recipients,
-      message.date,
-      message.internalDate,
-      message.size,
-      message.seen ? 1 : 0,
-      message.flagged ? 1 : 0,
-      message.hasAttachment ? 1 : 0,
-      indexedAt,
-      message.inReplyTo,
-      // Space-joined: a Message-ID never contains whitespace, and one TEXT column keeps the
-      // row flat instead of adding a table that only the thread builder would ever read.
-      message.references.join(' '),
-      JSON.stringify(message.from),
-      JSON.stringify([...message.to, ...message.cc]),
-      message.automation.listId,
-      message.automation.listUnsubscribe,
-      message.automation.autoSubmitted,
-      message.automation.precedence,
-    );
-    const { id } = db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number };
-    db.prepare(
-      'INSERT INTO messages_fts (rowid, subject, sender, recipients, body) VALUES (?, ?, ?, ?, ?)',
-    ).run(id, message.subject ?? '', message.sender, message.recipients, message.bodyText ?? '');
-    for (const att of message.attachments) {
-      db.prepare(
-        'INSERT OR REPLACE INTO attachments (message_id, section, filename, mime_type, size) VALUES (?, ?, ?, ?, ?)',
-      ).run(id, att.section, att.filename, att.mimeType, att.size);
-    }
-  });
+  upsertMessages(db, accountId, folderPath, [message], indexedAt);
 }
 
 /** Update only the flags of an already-indexed message. Touches no FTS row. */
@@ -247,7 +330,36 @@ export function updateFlags(
   ).run(flags.seen ? 1 : 0, flags.flagged ? 1 : 0, accountId, folderPath, uid);
 }
 
-/** Remove messages that no longer exist on the server. */
+/**
+ * Update the flags of many messages in one transaction: one `UPDATE … uid IN (…)` per flag
+ * combination and chunk, instead of one statement per message. Touches no FTS row.
+ */
+export function updateFlagsBatch(
+  db: IndexDatabase,
+  accountId: string,
+  folderPath: string,
+  states: readonly BackendFlagState[],
+): void {
+  if (states.length === 0) return;
+  const groups = new Map<string, number[]>();
+  for (const s of states) {
+    const key = `${s.seen ? 1 : 0}${s.flagged ? 1 : 0}`;
+    const list = groups.get(key);
+    if (list) list.push(s.uid);
+    else groups.set(key, [s.uid]);
+  }
+  withTransaction(db, () => {
+    for (const [key, uids] of groups) {
+      for (const chunk of chunks(uids, UID_CHUNK)) {
+        db.prepare(
+          `UPDATE messages SET seen = ?, flagged = ? WHERE account_id = ? AND folder_path = ? AND uid IN (${placeholders(chunk.length)})`,
+        ).run(Number(key[0]), Number(key[1]), accountId, folderPath, ...chunk);
+      }
+    }
+  });
+}
+
+/** Remove messages that no longer exist on the server, in one transaction, in bounded chunks. */
 export function deleteMessages(
   db: IndexDatabase,
   accountId: string,
@@ -255,20 +367,7 @@ export function deleteMessages(
   uids: number[],
 ): number {
   if (uids.length === 0) return 0;
-  return withTransaction(db, () => {
-    let removed = 0;
-    for (const uid of uids) {
-      const row = db
-        .prepare('SELECT id FROM messages WHERE account_id = ? AND folder_path = ? AND uid = ?')
-        .get(accountId, folderPath, uid) as { id?: number } | undefined;
-      if (row?.id === undefined) continue;
-      db.prepare('DELETE FROM messages_fts WHERE rowid = ?').run(row.id);
-      db.prepare('DELETE FROM attachments WHERE message_id = ?').run(row.id);
-      db.prepare('DELETE FROM messages WHERE id = ?').run(row.id);
-      removed++;
-    }
-    return removed;
-  });
+  return withTransaction(db, () => deleteUids(db, accountId, folderPath, uids));
 }
 
 /** Every UID currently indexed for a folder, with its flags. */

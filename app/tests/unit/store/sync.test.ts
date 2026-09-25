@@ -303,4 +303,40 @@ export default async () => {
       }
     });
   });
+
+  await describe('a full resync of a large folder', async () => {
+    await it(
+      'completes, and every read afterwards is complete',
+      async () => {
+        // The v2 upgrade resets every cursor, so the next sync re-fetches whole folders. On
+        // gjsify's sqlite each execution leaks a GWeakRef (gjsify gap, unfixed, gjsify
+        // fix/sqlite-weakref-leak); at ~15 executions a message the old one-row-at-a-time
+        // writes broke the index after ~5 400 messages, and every SELECT then returned [].
+        // 6 000 fetched twice is 12 000 upserts — far past that point — in one process.
+        const n = 6000;
+        const db = freshDb();
+        const backend = new FakeBackend();
+        backend.put(
+          'INBOX',
+          Array.from({ length: n }, (_, i) => message(i + 1, `Betreff ${i}`, `Text ${i}`)),
+        );
+        try {
+          const first = await syncIndex(db, backend, { now: AT('2026-08-06T12:00:00Z') });
+          expect(first.added).toBe(n);
+          db.exec('UPDATE folders SET last_uid = 0, uid_next = NULL, message_count = NULL');
+          const again = await syncIndex(db, backend, { now: AT('2026-08-07T12:00:00Z') });
+          expect(again.added).toBe(n);
+          expect(again.errors).toBe(0);
+
+          expect(db.prepare('SELECT uid FROM messages').all().length).toBe(n);
+          expect(db.prepare('SELECT rowid FROM messages_fts').all().length).toBe(n);
+          expect(searchIndex(db, { query: 'Betreff', limit: 100 }).length).toBe(100);
+          expect(searchIndex(db, { query: `Text ${n - 1}`, limit: 5 }).length).toBe(1);
+        } finally {
+          db.close();
+        }
+      },
+      { timeout: 300_000 },
+    );
+  });
 };
