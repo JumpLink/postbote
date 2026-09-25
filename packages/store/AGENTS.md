@@ -17,7 +17,7 @@ can be unit-tested on Node against a fake backend and `:memory:`. If you want to
 ## SQLite here is libgda, not sqlite3
 
 gjsify's `node:sqlite` is a **libgda 6.0 wrapper**. The API is `DatabaseSync`, so it looks like
-Node's, but four behaviours leak through and every one of them will bite you.
+Node's, but five behaviours leak through and every one of them will bite you.
 
 | # | Behaviour | What it forces |
 |---|---|---|
@@ -25,6 +25,7 @@ Node's, but four behaviours leak through and every one of them will bite you.
 | b | `exec()` splits multi-statement strings itself and does not understand `BEGIN … END` | **No triggers.** A trigger body would be cut into broken fragments. One statement per array entry in `schema.ts`, and no SQL comments inside those strings — the splitter is not a SQL parser. |
 | c | Parameters are **interpolated as escaped SQL literals**, not bound | Positional `?` only. The named path substitutes `:name` across the whole statement without excluding string literals. Do not store BLOBs. |
 | d | An FTS `SELECT` parses as `UNKNOWN`, so the wrapper tries `execute_non_select`, throws, and retries as a select | **Every FTS query runs twice.** Keep them narrow — `rowid` + `rank`, with a `LIMIT` — and hydrate the rows in a second, ordinary `SELECT`. |
+| e | Every execution leaks a GWeakRef on the connection (`run()` executes two extra SELECTs for `changes()` and `last_insert_rowid()`); ~25 000 `run()` calls overflow GObject's limit and every later SELECT on that connection returns `[]` — see (a). `System.gc()` does not help (gjsify gap, 0.49.0, unfixed) | **Count executions.** Batch bulk writes into multi-row INSERTs (`insertMany`, 60 bound values per statement — binding cost grows with the square of the parameter count), and give work that follows a large sync its own connection. |
 
 Two more, smaller:
 

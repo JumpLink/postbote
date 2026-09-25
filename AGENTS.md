@@ -91,7 +91,7 @@ the MCP server via `run_in_background` when driving it.
 - **No TypeScript parameter properties** (`constructor(private x: T)`). Node's
   `--experimental-strip-types` rejects them, which silently breaks the Node test run.
 - **SQLite runs on libgda, not sqlite3** — gjsify's `node:sqlite` is a `Gda` wrapper, and it
-  leaks through in four ways that WILL bite you. Read
+  leaks through in five ways that WILL bite you. Read
   [`packages/store/AGENTS.md`](packages/store/AGENTS.md) before writing any SQL.
 - **MCP tools are read-only or they do not register.** `app/src/frontends/mcp/runtime.ts`
   registers a tool only when `annotations.readOnlyHint === true`; a tool that omits the
