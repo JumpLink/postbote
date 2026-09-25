@@ -86,6 +86,9 @@ export class WhatsAppBackend implements DeliveryBackend {
     const store = SecretStore.open(path);
     const auth = SecretStoreAuthState.open(store, { flushDelayMs: this.options.flushDelayMs });
     if (!auth.registered) {
+      // `open` marked the fresh creds of an unlinked file dirty and armed its write-behind
+      // timer: nothing of it may reach the file, and the timer must not outlive the store.
+      auth.discard();
       store.close();
       throw new Error(`the WhatsApp session ${accountId} was never linked — ${RELINK_HINT}`);
     }
